@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Organizador de Turnos</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <header>
+        <h1>Organizador de Turnos</h1>
+        <p>Gestiona empleados y organiza los turnos de trabajo</p>
+        <div id="fechaHoraActual" class="fecha-hora" aria-live="polite"></div>
+    </header>
+
+    <main>
+
+        <section class="panel">
+            <h2>1. Cargar datos</h2>
+            <p>Puedes cargar un archivo Excel con los empleados.</p>
+            <input type="file" id="archivoExcel" accept=".xlsx,.xls,.csv">
+        </section>
+
+        <section class="panel">
+            <h2>2. Añadir empleados</h2>
+
+            <div class="form-grid alta-grid">
+                <div class="campo campo-grande">
+                    <label for="nombreEmpleado">Nombre del empleado</label>
+                    <input type="text" id="nombreEmpleado" placeholder="Escribe el nombre del empleado">
+                </div>
+
+                <div class="campo">
+                    <label for="porcentajeHoras">% horas contratadas</label>
+                    <input type="number" id="porcentajeHoras" min="0" max="100" value="100">
+                </div>
+
+                <div class="campo">
+                    <label for="rotacionUnidades">Rotación entre unidades</label>
+                    <input type="text" id="rotacionUnidades" placeholder="Escribe la unidad o unidades">
+                </div>
+
+                <div class="campo">
+                    <label for="cargoEmpleado">Cargo o rol profesional</label>
+                    <select id="cargoEmpleado">
+                        <option value="Coordinador">Coordinador</option>
+                        <option value="Auxiliar">Auxiliar</option>
+                        <option value="Limpieza">Limpieza</option>
+                        <option value="Enfermero">Enfermero</option>
+                        <option value="Médico">Médico</option>
+                        <option value="Otros">Otros</option>
+                    </select>
+                </div>
+            </div>
+
+            <button id="botonTodosEmpleados" class="boton boton-secundario boton-empleados-global" type="button">
+                Activar todos
+            </button>
+
+            <button id="botonAgregar" class="boton boton-primario" type="button">
+                Añadir empleado
+            </button>
+
+            <div class="lista-header">
+                <h3>Empleados introducidos</h3>
+                <div class="buscador-empleados">
+                    <label for="buscadorEmpleados">Buscar empleado</label>
+                    <input type="search" id="buscadorEmpleados" placeholder="Buscar por nombre o unidad">
+                </div>
+                <div class="organizacion-empleados">
+                    <label class="organizacion-etiqueta" for="ordenEmpleados">Organizar empleados por</label>
+                    <select id="ordenEmpleados" class="selector-organizacion">
+                        <option value="unidad">Unidad asignada</option>
+                        <option value="nombre">Orden alfabético</option>
+                        <option value="sexo">Sexo</option>
+                        <option value="profesion">Profesión</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="listaEmpleados" class="lista-empleados"></div>
+        </section>
+
+        <section class="panel">
+            <h2>3. Generar turnos</h2>
+            <details class="configuracion-unidades">
+                <summary>Configurar unidades y turnos asignables</summary>
+                <p>Define qué códigos pueden utilizarse en cada unidad y su color identificativo.</p>
+                <div class="agregar-unidad">
+                    <div class="campo">
+                        <label for="nuevaUnidad">Nueva unidad</label>
+                        <input type="text" id="nuevaUnidad" placeholder="Ejemplo: Unidad 6">
+                    </div>
+                    <button id="agregarUnidad" class="boton boton-secundario" type="button">
+                        Añadir unidad
+                    </button>
+                </div>
+                <div class="agregar-unidad quitar-unidad">
+                    <div class="campo">
+                        <label for="unidadQuitar">Quitar unidad</label>
+                        <select id="unidadQuitar"></select>
+                    </div>
+                    <button id="quitarUnidadBoton" class="boton boton-peligro" type="button">
+                        Quitar unidad
+                    </button>
+                </div>
+                <div id="configuracionUnidades" class="configuracion-unidades-lista"></div>
+                <button id="guardarConfiguracionUnidades" class="boton boton-secundario" type="button">
+                    Guardar configuración de unidades
+                </button>
+            </details>
+            <div class="form-grid periodo-generacion">
+                <div class="campo">
+                    <label for="fechaInicioTurnos">Fecha inicial</label>
+                    <input type="date" id="fechaInicioTurnos">
+                </div>
+                <div class="campo">
+                    <label for="fechaFinTurnos">Fecha final</label>
+                    <input type="date" id="fechaFinTurnos">
+                </div>
+                <div class="campo">
+                    <label for="unidadCuadro">Unidad del cuadro</label>
+                    <select id="unidadCuadro">
+                        <option value="todas">Todas las unidades</option>
+                    </select>
+                </div>
+            </div>
+            <div class="acciones-generacion">
+                <button id="botonGenerar" class="boton boton-primario" type="button">
+                    Generar turnos
+                </button>
+                <button id="botonGenerarPeriodo" class="boton boton-primario" type="button">
+                    Generar periodo
+                </button>
+                <button id="botonActualizarCuadro" class="boton boton-secundario" type="button">
+                    Actualizar cuadro
+                </button>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>4. Cuadrante de turnos</h2>
+            <div class="cuadro-cabecera">
+                <div>
+                    <p class="cuadro-kicker">Vista operativa</p>
+                    <h3 id="tituloCuadro">Aún no hay un cuadrante generado</h3>
+                    <p id="detalleCuadro" class="cuadro-detalle">Selecciona un periodo y genera los turnos para ver la planificación.</p>
+                </div>
+                <div class="cuadro-acciones">
+                    <div id="estadoCuadro" class="estado-cuadro estado-pendiente">Pendiente</div>
+                    <button id="botonImprimirCuadro" class="boton boton-secundario" type="button" disabled>Imprimir</button>
+                    <button id="botonDescargarCuadro" class="boton boton-secundario" type="button" disabled>CSV</button>
+                    <button id="botonImagenCuadro" class="boton boton-secundario" type="button" disabled>JPG</button>
+                </div>
+            </div>
+            <div id="resumenCuadro" class="resumen-cuadro" aria-live="polite">
+                <div class="metrica-cuadro"><strong id="metricaEmpleados">0</strong><span>empleados</span></div>
+                <div class="metrica-cuadro"><strong id="metricaUnidades">0</strong><span>unidades</span></div>
+                <div class="metrica-cuadro"><strong id="metricaDias">0</strong><span>días</span></div>
+                <div class="metrica-cuadro"><strong id="metricaCambios">0</strong><span>cambios manuales</span></div>
+            </div>
+            <div id="cuadrosTurnos" class="cuadros-turnos"></div>
+        </section>
+
+    </main>
+
+    <div id="modalEmpleado" class="modal oculto" aria-hidden="true">
+        <div class="modal-content">
+            <button id="cerrarModalEmpleado" class="modal-close" type="button" aria-label="Cerrar">×</button>
+
+            <h3 id="modalTitulo">Empleado</h3>
+
+            <div class="tabs" role="tablist" aria-label="Ficha del empleado">
+                <button class="tab active" type="button" data-tab="contratacion">Contratación</button>
+                <button class="tab" type="button" data-tab="reglas">Roles</button>
+            </div>
+
+            <div id="tab-contratacion" class="tab-panel active">
+                <form id="formContratoEmpleado" class="form-contratacion" autocomplete="off">
+                    <div class="form-grid">
+                        <div class="campo">
+                            <label for="tipoContrato">Tipo de contrato</label>
+                            <select id="tipoContrato">
+                                <option value="Fijo">Fijo</option>
+                                <option value="Temporal">Temporal</option>
+                                <option value="Indefinido">Indefinido</option>
+                                <option value="Prácticas">Prácticas</option>
+                            </select>
+                        </div>
+
+                        <div class="campo">
+                            <label for="jornada">Jornada</label>
+                            <select id="jornada">
+                                <option value="Completa">Completa</option>
+                                <option value="Parcial">Parcial</option>
+                                <option value="Reducida">Reducida</option>
+                            </select>
+                        </div>
+
+                        <div class="campo">
+                            <label for="porcentajeHorasEmpleado">% horas contratadas al mes</label>
+                            <input type="number" id="porcentajeHorasEmpleado" min="0" max="100" value="100">
+                        </div>
+
+                        <div class="campo">
+                            <label for="unidadActual">Unidad asignada</label>
+                            <input type="text" id="unidadActual" placeholder="Escribe la unidad asignada">
+                        </div>
+
+                        <div class="campo">
+                            <label for="fechaAlta">Fecha de alta</label>
+                            <input type="date" id="fechaAlta">
+                        </div>
+
+                        <div class="campo">
+                            <label for="sexoEmpleado">Sexo</label>
+                            <select id="sexoEmpleado">
+                                <option value="">Sin indicar</option>
+                                <option value="Mujer">Mujer</option>
+                                <option value="Hombre">Hombre</option>
+                                <option value="No binario">No binario</option>
+                                <option value="Prefiero no decirlo">Prefiero no decirlo</option>
+                            </select>
+                        </div>
+
+                        <div class="campo">
+                            <label for="transportePropio">Transporte propio</label>
+                            <select id="transportePropio">
+                                <option value="Sí">Sí</option>
+                                <option value="No" selected>No</option>
+                            </select>
+                        </div>
+
+                        <div class="campo campo-full responsabilidades-cargo">
+                            <label for="cargoEmpleadoModal">Cargo o rol profesional</label>
+                            <select id="cargoEmpleadoModal">
+                                <option value="Coordinador">Coordinador</option>
+                                <option value="Auxiliar">Auxiliar</option>
+                                <option value="Limpieza">Limpieza</option>
+                                <option value="Enfermero">Enfermero</option>
+                                <option value="Médico">Médico</option>
+                                <option value="Otros">Otros</option>
+                            </select>
+                            <div id="responsabilidadesCargo" class="responsabilidades-cargo-lista" aria-live="polite"></div>
+                        </div>
+
+                        <div class="campo campo-full">
+                            <label for="observacionesEmpleado">Observaciones</label>
+                            <textarea id="observacionesEmpleado" rows="4" placeholder="Añade detalles de contratación, restricciones o comentarios..."></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <div id="tab-reglas" class="tab-panel">
+                <div id="contenedorReglasEmpleado" class="reglas-modal"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button id="botonDescargar" type="button" class="boton boton-secundario">Descargar</button>
+                <button id="botonImprimir" type="button" class="boton boton-secundario">Imprimir</button>
+                <button id="botonEliminarEmpleado" type="button" class="boton boton-peligro">Quitar empleado</button>
+                <button id="guardarModalEmpleado" type="button" class="boton boton-primario">Guardar cambios</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="modalCambioTurno" class="modal oculto" aria-hidden="true">
+        <div class="modal-content modal-cambio-turno">
+            <button id="cerrarModalCambioTurno" class="modal-close" type="button" aria-label="Cerrar">×</button>
+            <h3 id="tituloCambioTurno">Cambiar turno</h3>
+            <p id="detalleCambioTurno" class="detalle-cambio-turno"></p>
+
+            <div class="campo">
+                <label for="nuevoTurnoIndividual">Nuevo turno</label>
+                <select id="nuevoTurnoIndividual"></select>
+            </div>
+
+            <div class="campo">
+                <label for="unidadCambioTurno">Unidad de trabajo</label>
+                <select id="unidadCambioTurno"></select>
+            </div>
+
+            <div class="campo">
+                <label for="horarioManualCambioTurno">Horario del rol (formato usado en la aplicación)</label>
+                <input type="text" id="horarioManualCambioTurno" placeholder="07:45 - 14:45">
+                <small class="ayuda-horario-manual">Se aplica solo a este día. Deja el formato "HH:MM - HH:MM" o escribe "No trabaja".</small>
+            </div>
+
+            <div class="campo">
+                <label for="observacionCambioTurno">Observación del cambio</label>
+                <textarea id="observacionCambioTurno" rows="2" placeholder="Motivo por el que este rol o unidad queda vacante..."></textarea>
+            </div>
+
+            <div class="campo">
+                <label for="ordenadoPorCambioTurno">Ordenado por</label>
+                <input type="text" id="ordenadoPorCambioTurno" placeholder="Nombre de quien ordena el cambio">
+            </div>
+
+            <div class="sugerencias-cobertura">
+                <h4>Sugerencias de cobertura</h4>
+                <p>Se priorizan personas libres ese día y se evitan doblajes o turnos duplicados.</p>
+                <div id="listaSugerenciasCobertura"></div>
+            </div>
+
+            <div class="modal-actions">
+                <button id="guardarCambioTurno" type="button" class="boton boton-primario">Guardar cambio</button>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Organizador de Turnos</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <script src="Apps.js"></script>
+
+</body>
+
+</html>
