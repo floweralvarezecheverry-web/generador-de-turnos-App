@@ -19,15 +19,21 @@
     </header>
 
     <main>
+        <nav class="navegacion-principal" aria-label="Secciones principales" role="tablist">
+            <button class="principal-tab active" id="principal-tab-personal" type="button" role="tab" aria-selected="true" aria-controls="principal-personal" data-principal-tab="personal">Gestión de personal</button>
+            <button class="principal-tab" id="principal-tab-reglas" type="button" role="tab" aria-selected="false" aria-controls="principal-reglas" data-principal-tab="reglas">Configuración de reglas</button>
+            <button class="principal-tab" id="principal-tab-cuadrante" type="button" role="tab" aria-selected="false" aria-controls="principal-cuadrante" data-principal-tab="cuadrante">Generador y cuadrante</button>
+        </nav>
 
-        <section class="panel">
-            <h2>1. Cargar datos</h2>
-            <p>Puedes cargar un archivo Excel con los empleados.</p>
+        <div id="principal-personal" class="principal-panel active" role="tabpanel" aria-labelledby="principal-tab-personal">
+        <details class="cargar-datos">
+            <summary>Cargar empleados desde archivo</summary>
+            <p>Puedes importar un archivo Excel o CSV.</p>
             <input type="file" id="archivoExcel" accept=".xlsx,.xls,.csv">
-        </section>
+        </details>
 
         <section class="panel">
-            <h2>2. Añadir empleados</h2>
+            <h2>Personal</h2>
 
             <div class="form-grid alta-grid">
                 <div class="campo campo-grande">
@@ -85,9 +91,69 @@
 
             <div id="listaEmpleados" class="lista-empleados"></div>
         </section>
+        </div>
 
+        <div id="principal-reglas" class="principal-panel" role="tabpanel" aria-labelledby="principal-tab-reglas" hidden>
         <section class="panel">
-            <h2>3. Generar turnos</h2>
+            <h2>Reglas generales del generador</h2>
+            <p>Pertenecen al funcionamiento del cuadrante y se configuran una vez. Se guardan automáticamente.</p>
+            <div class="tabla-contenedor">
+                <table class="tabla-reglas-generales">
+                    <thead>
+                        <tr><th>Regla</th><th>Valor</th><th>Activa</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Descanso mínimo entre turnos</td>
+                            <td><input type="number" min="1" step="1" data-regla-general="descansoEntreTurnos" aria-label="Horas de descanso mínimo entre turnos"> horas</td>
+                            <td><input type="checkbox" data-regla-general="descansoEntreTurnos" aria-label="Activar descanso mínimo entre turnos"></td>
+                        </tr>
+                        <tr>
+                            <td>Descanso semanal mínimo (cada 7 días)</td>
+                            <td><input type="number" min="1" step="1" data-regla-general="descansoSemanal" aria-label="Horas de descanso semanal mínimo"> horas</td>
+                            <td><input type="checkbox" data-regla-general="descansoSemanal" aria-label="Activar descanso semanal mínimo"></td>
+                        </tr>
+                        <tr>
+                            <td>Máximo de horas semanales (bloques de 7 días)</td>
+                            <td><input type="number" min="1" step="0.5" data-regla-general="maxHorasSemanales" aria-label="Máximo de horas semanales"> h</td>
+                            <td><input type="checkbox" data-regla-general="maxHorasSemanales" aria-label="Activar máximo de horas semanales"></td>
+                        </tr>
+                        <tr>
+                            <td>Máximo de horas mensuales</td>
+                            <td><input type="number" min="1" step="0.5" data-regla-general="maxHorasMensuales" aria-label="Máximo de horas mensuales"> h</td>
+                            <td><input type="checkbox" data-regla-general="maxHorasMensuales" aria-label="Activar máximo de horas mensuales"></td>
+                        </tr>
+                        <tr>
+                            <td>Máximo de horas anuales</td>
+                            <td><input type="number" min="1" step="1" data-regla-general="maxHorasAnuales" aria-label="Máximo de horas anuales"> h</td>
+                            <td><input type="checkbox" data-regla-general="maxHorasAnuales" aria-label="Activar máximo de horas anuales"></td>
+                        </tr>
+                        <tr>
+                            <td>Las vacaciones impiden asignar turno</td>
+                            <td>Sí</td>
+                            <td><input type="checkbox" data-regla-general="vacacionesImpidenTurno" aria-label="Activar vacaciones impiden turno"></td>
+                        </tr>
+                        <tr>
+                            <td>Respetar puesto/cualificación</td>
+                            <td>Sí</td>
+                            <td><input type="checkbox" data-regla-general="respetarPuesto" aria-label="Activar respetar puesto y cualificación"></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+        <section class="panel">
+            <h2>Reglas de unidades y turnos</h2>
+            <div class="pestanas-reglas" role="tablist" aria-label="Reglas de unidades">
+                <button class="pestana-reglas active" type="button" role="tab" aria-selected="true" data-reglas-tab="turnos">Turnos asignables</button>
+                <button class="pestana-reglas" type="button" role="tab" aria-selected="false" data-reglas-tab="puestos">Puestos requeridos</button>
+            </div>
+            <div data-reglas-panel="puestos" hidden>
+                <p>Indica cuántos empleados necesita cada unidad por día. El generador cubre esos puestos con empleados de la unidad o con quienes puedan cumplir el rol, y las personas sobrantes pasan a descanso. Deja el campo vacío para no limitar.</p>
+                <div id="configuracionPuestos" class="configuracion-unidades-lista"></div>
+                <button id="guardarPuestosUnidades" class="boton boton-secundario" type="button">Guardar puestos requeridos</button>
+            </div>
+            <div data-reglas-panel="turnos">
             <details class="configuracion-unidades">
                 <summary>Configurar unidades y turnos asignables</summary>
                 <p>Define qué códigos pueden utilizarse en cada unidad y su color identificativo.</p>
@@ -114,6 +180,14 @@
                     Guardar configuración de unidades
                 </button>
             </details>
+            <p class="nota-seccion">Las reglas particulares de cada empleado se editan desde su ficha, en Gestión de personal.</p>
+            </div>
+        </section>
+        </div>
+
+        <div id="principal-cuadrante" class="principal-panel" role="tabpanel" aria-labelledby="principal-tab-cuadrante" hidden>
+        <section class="panel panel-generador">
+            <h2>Generador de turnos</h2>
             <div class="form-grid periodo-generacion">
                 <div class="campo">
                     <label for="fechaInicioTurnos">Fecha inicial</label>
@@ -144,7 +218,7 @@
         </section>
 
         <section class="panel">
-            <h2>4. Cuadrante de turnos</h2>
+            <h2>Cuadrante de turnos</h2>
             <div class="cuadro-cabecera">
                 <div>
                     <p class="cuadro-kicker">Vista operativa</p>
@@ -153,6 +227,7 @@
                 </div>
                 <div class="cuadro-acciones">
                     <div id="estadoCuadro" class="estado-cuadro estado-pendiente">Pendiente</div>
+                    <button id="botonDeshacerCambio" class="boton boton-secundario" type="button" disabled title="Deshacer el último cambio manual">Deshacer</button>
                     <button id="botonImprimirCuadro" class="boton boton-secundario" type="button" disabled>Imprimir</button>
                     <button id="botonDescargarCuadro" class="boton boton-secundario" type="button" disabled>CSV</button>
                     <button id="botonImagenCuadro" class="boton boton-secundario" type="button" disabled>JPG</button>
@@ -166,6 +241,31 @@
             </div>
             <div id="cuadrosTurnos" class="cuadros-turnos"></div>
         </section>
+
+        <section class="panel">
+            <h2>Turnos individuales</h2>
+            <div class="form-grid periodo-generacion">
+                <div class="campo">
+                    <label for="empleadoIndividual">Empleado</label>
+                    <select id="empleadoIndividual"></select>
+                </div>
+                <div class="campo">
+                    <label for="fechaInicioIndividual">Desde</label>
+                    <input type="date" id="fechaInicioIndividual">
+                </div>
+                <div class="campo">
+                    <label for="fechaFinIndividual">Hasta</label>
+                    <input type="date" id="fechaFinIndividual">
+                </div>
+            </div>
+            <div class="acciones-generacion">
+                <button id="botonMostrarIndividual" class="boton boton-primario" type="button">Mostrar turnos</button>
+                <button id="botonImprimirIndividual" class="boton boton-secundario" type="button">Imprimir calendario</button>
+            </div>
+            <p class="nota-seccion">Muestra el calendario del empleado a partir del cuadrante ya generado, sin recalcular turnos.</p>
+            <div id="resultadoIndividual" class="resultado-individual" aria-live="polite"></div>
+        </section>
+        </div>
 
     </main>
 
@@ -183,6 +283,11 @@
             <div id="tab-contratacion" class="tab-panel active">
                 <form id="formContratoEmpleado" class="form-contratacion" autocomplete="off">
                     <div class="form-grid">
+                        <div class="campo campo-full">
+                            <label for="nombreCompletoEmpleado">Nombre completo</label>
+                            <input type="text" id="nombreCompletoEmpleado" placeholder="Nombre y apellidos del empleado" autocomplete="off">
+                        </div>
+
                         <div class="campo">
                             <label for="tipoContrato">Tipo de contrato</label>
                             <select id="tipoContrato">
@@ -209,7 +314,8 @@
 
                         <div class="campo">
                             <label for="unidadActual">Unidad asignada</label>
-                            <input type="text" id="unidadActual" placeholder="Escribe la unidad asignada">
+                            <input type="text" id="unidadActual" list="unidadesDisponibles" placeholder="Escribe o elige la unidad asignada">
+                            <datalist id="unidadesDisponibles"></datalist>
                         </div>
 
                         <div class="campo">
