@@ -136,6 +136,11 @@ const nuevaUnidad = document.getElementById("nuevaUnidad");
 const agregarUnidadBoton = document.getElementById("agregarUnidad");
 const unidadQuitar = document.getElementById("unidadQuitar");
 const quitarUnidadBoton = document.getElementById("quitarUnidadBoton");
+const unidadNuevoRol = document.getElementById("unidadNuevoRol");
+const crearRolUnidadBoton = document.getElementById("crearRolUnidad");
+const unidadEliminarRol = document.getElementById("unidadEliminarRol");
+const codigoEliminarRolUnidad = document.getElementById("codigoEliminarRolUnidad");
+const eliminarRolUnidadBoton = document.getElementById("eliminarRolUnidad");
 const unidadCuadro = document.getElementById("unidadCuadro");
 const tabs = document.querySelectorAll(".tab");
 const tabPanels = document.querySelectorAll(".tab-panel");
@@ -225,6 +230,13 @@ if (agregarUnidadBoton) {
 if (quitarUnidadBoton) {
     quitarUnidadBoton.addEventListener("click", quitarUnidadConfigurada);
 }
+
+if (crearRolUnidadBoton) {
+    crearRolUnidadBoton.addEventListener("click", crearRolParaUnidad);
+}
+
+unidadEliminarRol?.addEventListener("change", actualizarRolesEliminarUnidad);
+eliminarRolUnidadBoton?.addEventListener("click", eliminarRolDeUnidadConfigurada);
 
 if (archivoExcel) {
     archivoExcel.addEventListener("change", manejarArchivoExcel);
@@ -574,6 +586,15 @@ function normalizarConfiguracionUnidades(configuracion) {
 }
 
 function guardarConfiguracionUnidades() {
+    sincronizarConfiguracionUnidadesDesdeFormulario();
+    localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
+    renderizarConfiguracionUnidades();
+    actualizarSelectorUnidades();
+    mostrarEmpleados();
+    alert("Configuración de unidades guardada");
+}
+
+function sincronizarConfiguracionUnidadesDesdeFormulario() {
     const datos = {};
     document.querySelectorAll("[data-config-unidad]").forEach((bloque) => {
         const unidad = bloque.dataset.configUnidad;
@@ -584,11 +605,48 @@ function guardarConfiguracionUnidades() {
         };
     });
     configuracionUnidades = normalizarConfiguracionUnidades({ ...configuracionUnidades, ...datos });
+}
+
+function crearRolParaUnidad() {
+    const unidad = unidadNuevoRol?.value;
+    const codigo = document.getElementById("codigoNuevoRolUnidad")?.value.trim().toUpperCase();
+    const nombre = document.getElementById("nombreNuevoRolUnidad")?.value.trim();
+    const horario = document.getElementById("horarioNuevoRolUnidad")?.value.trim();
+    const descripcion = document.getElementById("descripcionNuevoRolUnidad")?.value.trim() || "Rol personalizado";
+
+    if (!unidad || !codigo || !nombre || !horario) {
+        alert("Selecciona una unidad y completa el código, el nombre y el horario");
+        return;
+    }
+    if (!/^[MT][A-Z0-9-]{1,7}$/.test(codigo)) {
+        alert("El código debe empezar por M o T y tener entre 2 y 8 caracteres");
+        return;
+    }
+    if (catalogoTurnos.some((turno) => turno.codigo.toUpperCase() === codigo) || rolesPersonalizadosGuardados.some((turno) => turno.codigo.toUpperCase() === codigo)) {
+        alert("Ese código ya existe en la aplicación");
+        return;
+    }
+
+    sincronizarConfiguracionUnidadesDesdeFormulario();
+    const claveUnidad = Object.keys(configuracionUnidades).find((nombreUnidad) => unidadesSonIguales(nombreUnidad, unidad));
+    if (!claveUnidad) {
+        alert("La unidad seleccionada ya no está disponible");
+        return;
+    }
+
+    rolesPersonalizadosGuardados.push({ codigo, nombre, horario, descripcion });
+    configuracionUnidades[claveUnidad].turnos = [...new Set([...configuracionUnidades[claveUnidad].turnos, codigo])];
+    guardarRolesPersonalizados();
     localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
     renderizarConfiguracionUnidades();
     actualizarSelectorUnidades();
     mostrarEmpleados();
-    alert("Configuración de unidades guardada");
+
+    ["codigoNuevoRolUnidad", "nombreNuevoRolUnidad", "horarioNuevoRolUnidad", "descripcionNuevoRolUnidad"].forEach((id) => {
+        const campo = document.getElementById(id);
+        if (campo) campo.value = "";
+    });
+    alert(`Rol ${codigo} añadido a ${claveUnidad}`);
 }
 
 function agregarNuevaUnidad() {
@@ -701,6 +759,9 @@ function extraerNumeroUnidad(nombre) {
 function renderizarConfiguracionUnidades() {
     if (!configuracionUnidadesElemento) return;
     configuracionUnidadesElemento.innerHTML = "";
+    const turnosDisponibles = [...catalogoTurnos, ...rolesPersonalizadosGuardados].filter((turno, indice, turnos) =>
+        turno.codigo !== "Vacaciones" && turnos.findIndex((item) => item.codigo === turno.codigo) === indice
+    );
     ordenarUnidades(Object.entries(configuracionUnidades), ([unidad]) => unidad).forEach(([unidad, configuracion]) => {
         const bloque = document.createElement("div");
         bloque.className = "configuracion-unidad-item";
@@ -716,7 +777,7 @@ function renderizarConfiguracionUnidades() {
         bloque.appendChild(color);
         const turnos = document.createElement("div");
         turnos.className = "configuracion-turnos-checkboxes";
-        catalogoTurnos.filter((turno) => turno.codigo !== "Vacaciones").forEach((turno) => {
+        turnosDisponibles.forEach((turno) => {
             const label = document.createElement("label");
             label.className = "check-inline";
             label.innerHTML = `<input type="checkbox" data-config-turno value="${turno.codigo}"> ${turno.codigo}`;
@@ -726,8 +787,87 @@ function renderizarConfiguracionUnidades() {
         bloque.appendChild(turnos);
         configuracionUnidadesElemento.appendChild(bloque);
     });
+    actualizarSelectorUnidadNuevoRol();
+    actualizarSelectorUnidadEliminarRol();
     actualizarSelectorUnidadQuitar();
     renderizarPuestosUnidades();
+}
+
+function actualizarSelectorUnidadNuevoRol() {
+    if (!unidadNuevoRol) return;
+    const valorAnterior = unidadNuevoRol.value;
+    unidadNuevoRol.innerHTML = "";
+    ordenarUnidades(Object.keys(configuracionUnidades), (unidad) => unidad).forEach((unidad) => {
+        const opcion = document.createElement("option");
+        opcion.value = unidad;
+        opcion.textContent = unidad;
+        unidadNuevoRol.appendChild(opcion);
+    });
+    const opcionAnterior = Array.from(unidadNuevoRol.options).find((opcion) => unidadesSonIguales(opcion.value, valorAnterior));
+    if (opcionAnterior) unidadNuevoRol.value = opcionAnterior.value;
+}
+
+function actualizarSelectorUnidadEliminarRol() {
+    if (!unidadEliminarRol) return;
+    const valorAnterior = unidadEliminarRol.value;
+    unidadEliminarRol.innerHTML = "";
+    ordenarUnidades(Object.keys(configuracionUnidades), (unidad) => unidad).forEach((unidad) => {
+        const opcion = document.createElement("option");
+        opcion.value = unidad;
+        opcion.textContent = unidad;
+        unidadEliminarRol.appendChild(opcion);
+    });
+    const opcionAnterior = Array.from(unidadEliminarRol.options).find((opcion) => unidadesSonIguales(opcion.value, valorAnterior));
+    if (opcionAnterior) unidadEliminarRol.value = opcionAnterior.value;
+    actualizarRolesEliminarUnidad();
+}
+
+function actualizarRolesEliminarUnidad() {
+    if (!codigoEliminarRolUnidad) return;
+    const valorAnterior = codigoEliminarRolUnidad.value;
+    codigoEliminarRolUnidad.innerHTML = "";
+    const unidad = unidadEliminarRol?.value;
+    const configuracion = Object.entries(configuracionUnidades).find(([nombre]) => unidadesSonIguales(nombre, unidad))?.[1];
+    const rolesUnidad = (configuracion?.turnos || [])
+        .map((codigo) => rolesPersonalizadosGuardados.find((rol) => rol.codigo === codigo))
+        .filter(Boolean);
+
+    rolesUnidad.forEach((rol) => {
+        const opcion = document.createElement("option");
+        opcion.value = rol.codigo;
+        opcion.textContent = `${rol.codigo} · ${rol.nombre}`;
+        codigoEliminarRolUnidad.appendChild(opcion);
+    });
+    if (!rolesUnidad.length) {
+        const opcion = document.createElement("option");
+        opcion.value = "";
+        opcion.textContent = "No hay roles personalizados en esta unidad";
+        codigoEliminarRolUnidad.appendChild(opcion);
+    }
+    const opcionAnterior = Array.from(codigoEliminarRolUnidad.options).find((opcion) => opcion.value === valorAnterior);
+    if (opcionAnterior) codigoEliminarRolUnidad.value = valorAnterior;
+}
+
+function eliminarRolDeUnidadConfigurada() {
+    const unidad = unidadEliminarRol?.value;
+    const codigo = codigoEliminarRolUnidad?.value;
+    if (!unidad || !codigo) {
+        alert("Selecciona un rol personalizado para eliminar");
+        return;
+    }
+    if (!window.confirm(`¿Quieres quitar el rol ${codigo} de ${unidad}?`)) return;
+
+    sincronizarConfiguracionUnidadesDesdeFormulario();
+    const claveUnidad = Object.keys(configuracionUnidades).find((nombre) => unidadesSonIguales(nombre, unidad));
+    if (!claveUnidad) return;
+    configuracionUnidades[claveUnidad].turnos = configuracionUnidades[claveUnidad].turnos.filter((turno) => turno !== codigo);
+
+    const sigueAsignado = Object.values(configuracionUnidades).some((configuracion) => configuracion.turnos.includes(codigo));
+    if (!sigueAsignado) quitarRolPersonalizadoDelCatalogo(codigo);
+    localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
+    renderizarConfiguracionUnidades();
+    actualizarSelectorUnidades();
+    mostrarEmpleados();
 }
 
 function renderizarPuestosUnidades() {
@@ -1726,6 +1866,18 @@ function eliminarRolPersonalizado(codigo, empleadoActual) {
     const rol = rolesPersonalizadosGuardados.find((item) => item.codigo === codigo);
     if (!rol || !window.confirm(`¿Quieres eliminar el rol ${codigo} de toda la aplicación?`)) return;
 
+    quitarRolPersonalizadoDelCatalogo(codigo);
+    Object.values(configuracionUnidades).forEach((configuracion) => {
+        configuracion.turnos = configuracion.turnos.filter((turno) => turno !== codigo);
+    });
+    localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
+    renderizarConfiguracionUnidades();
+    actualizarSelectorUnidades();
+    mostrarEmpleados();
+    renderizarReglasEmpleadoModal(empleadoActual);
+}
+
+function quitarRolPersonalizadoDelCatalogo(codigo) {
     rolesPersonalizadosGuardados = rolesPersonalizadosGuardados.filter((item) => item.codigo !== codigo);
     Object.values(reglasPorEmpleado).forEach((regla) => {
         if (Array.isArray(regla.reglasPersonalizadas)) {
@@ -1738,7 +1890,6 @@ function eliminarRolPersonalizado(codigo, empleadoActual) {
     });
     guardarRolesPersonalizados();
     guardarReglas();
-    renderizarReglasEmpleadoModal(empleadoActual);
 }
 
 function eliminarHorarioTrabajo(horario, empleadoActual) {
@@ -2059,7 +2210,9 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                     fechaDia >= regla.vacacionesInicio && fechaDia <= regla.vacacionesFin;
                 let turno = obtenerTurnoResponsabilidad(unidadEmpleado, regla, fechasPeriodo[indiceDia].valor, indiceDia, indiceEmpleado);
                 if (!turno) {
-                    turno = (turnosProgramables.length ? turnosProgramables : turnosEmpleado)[indiceDia % (turnosProgramables.length || turnosEmpleado.length)];
+                    turno = turnosProgramables.length
+                        ? turnosProgramables[indiceDia % turnosProgramables.length]
+                        : "Descanso";
                 }
 
                 if (estaDeVacaciones && turnosEmpleado.includes("Vacaciones") && reglasGenerales.vacacionesImpidenTurno.activa) {
@@ -2097,6 +2250,10 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
         aplicarPuestosRequeridos(unidad, registrosUnidad, todosRegistros, fechasPeriodo);
     });
 
+    registrosPorUnidad.forEach(([unidad]) => {
+        aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo);
+    });
+
     todosRegistros.forEach(({ empleado, unidad, regla, porcentaje, limiteHoras, turnosOriginalesPorFecha, unidadesPorDia }) => {
         {
             const turnosPorFecha = [];
@@ -2106,6 +2263,59 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                 turnosPorFecha.push(cambioManual && !vacacionesProtegidas ? cambioManual : turnoOriginal);
             });
 
+
+        function aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo) {
+            const turnosConfigurados = obtenerConfiguracionUnidad(unidad)?.turnos || [];
+            const turnosUnicos = [...new Set(turnosConfigurados.filter((turno) =>
+                turno !== "Vacaciones" && ["mañanas", "tardes"].includes(clasificarTurno(turno))
+            ))];
+            if (!turnosUnicos.length) return;
+
+            fechasPeriodo.forEach((_, dia) => {
+                const turnoDia = (registro) => registro.turnosOriginalesPorFecha[dia];
+                const trabajaEnUnidad = (registro) => unidadesSonIguales(registro.unidadesPorDia[dia] || registro.unidad, unidad);
+                const asignados = todosRegistros.filter((registro) => trabajaEnUnidad(registro) &&
+                    !["Descanso", "Libre", "Vacaciones"].includes(turnoDia(registro))
+                );
+                const ocupados = new Set();
+
+                asignados.forEach((registro) => {
+                    const turno = turnoDia(registro);
+                    if (!turnosUnicos.includes(turno) || ocupados.has(turno)) {
+                        registro.turnosOriginalesPorFecha[dia] = "Descanso";
+                        delete registro.unidadesPorDia[dia];
+                        return;
+                    }
+                    ocupados.add(turno);
+                });
+
+                turnosUnicos.forEach((turno) => {
+                    if (ocupados.has(turno)) return;
+                    const grupo = clasificarTurno(turno);
+                    const candidatos = todosRegistros
+                        .filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro)) && !registro.unidadesPorDia[dia])
+                        .filter((registro) => !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
+                        .filter((registro) => {
+                            const preferidos = expandirTurnosAgrupados(obtenerTurnosPreferidos(registro.regla));
+                            return preferidos.includes(turno) || nivelCobertura(registro, unidad) < 2 || !reglasGenerales.respetarPuesto.activa;
+                        })
+                        .map((registro) => ({
+                            registro,
+                            nivel: nivelCobertura(registro, unidad),
+                            horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla)
+                        }))
+                        .sort((a, b) => a.nivel - b.nivel || a.horas - b.horas);
+
+                    const asignado = candidatos.some(({ registro }) => intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo));
+                    if (asignado) {
+                        ocupados.add(turno);
+                    } else {
+                        const clave = `${unidad} (${turno})`;
+                        avisosCobertura.set(clave, (avisosCobertura.get(clave) || 0) + 1);
+                    }
+                });
+            });
+        }
             const horas = calcularHorasTurnos(turnosPorFecha, regla);
             asignaciones.push({
                 empleado,
@@ -2138,7 +2348,7 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
     fechasPeriodo.forEach((_, dia) => {
         const turnoDia = (registro) => registro.turnosOriginalesPorFecha[dia];
         const trabajaEn = (registro) => registro.unidadesPorDia[dia] || registro.unidad;
-        const delGrupo = (grupo) => todosRegistros.filter((registro) => trabajaEn(registro) === unidad && clasificarTurno(turnoDia(registro)) === grupo);
+        const delGrupo = (grupo) => todosRegistros.filter((registro) => unidadesSonIguales(trabajaEn(registro), unidad) && clasificarTurno(turnoDia(registro)) === grupo);
         // Rota el orden cada día para repartir los descansos entre el equipo.
         const rotar = (lista) => lista.map((_, indice) => lista[(indice + dia) % lista.length]);
 
@@ -3036,10 +3246,10 @@ function obtenerTurnoResponsabilidad(unidad, regla, fechaValor, indiceDia, indic
 
 function obtenerGruposTurnosUnidad(unidad, regla) {
     const configuracion = obtenerConfiguracionUnidad(unidad);
-    if (configuracion?.turnos?.length) {
+    if (Array.isArray(configuracion?.turnos)) {
         const manana = configuracion.turnos.filter((turno) => /^M|^CD|^RF/.test(turno));
         const tarde = configuracion.turnos.filter((turno) => /^T/.test(turno));
-        if (manana.length || tarde.length) return { manana, tarde };
+        return { manana, tarde };
     }
 
     if (unidadCoincide(unidad, 5) && regla.reglaResponsableUnidad5 !== false) {

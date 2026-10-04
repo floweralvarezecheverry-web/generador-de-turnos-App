@@ -156,7 +156,7 @@
             <div data-reglas-panel="turnos">
             <details class="configuracion-unidades">
                 <summary>Configurar unidades y turnos asignables</summary>
-                <p>Define qué códigos pueden utilizarse en cada unidad y su color identificativo.</p>
+                <p>Selecciona los códigos de cada unidad. El generador asigna como máximo una persona por código y día (por ejemplo, un M1 y un M2), según el personal disponible.</p>
                 <div class="agregar-unidad">
                     <div class="campo">
                         <label for="nuevaUnidad">Nueva unidad</label>
@@ -174,6 +174,48 @@
                     <button id="quitarUnidadBoton" class="boton boton-peligro" type="button">
                         Quitar unidad
                     </button>
+                </div>
+                <div class="nuevo-rol-unidad">
+                    <h3>Crear rol para una unidad</h3>
+                    <p>Usa códigos que empiecen por M para mañana o T para tarde.</p>
+                    <div class="nuevo-rol-unidad-grid">
+                        <div class="campo">
+                            <label for="unidadNuevoRol">Unidad</label>
+                            <select id="unidadNuevoRol"></select>
+                        </div>
+                        <div class="campo">
+                            <label for="codigoNuevoRolUnidad">Código</label>
+                            <input id="codigoNuevoRolUnidad" type="text" maxlength="8" placeholder="M7 o T5">
+                        </div>
+                        <div class="campo">
+                            <label for="nombreNuevoRolUnidad">Nombre</label>
+                            <input id="nombreNuevoRolUnidad" type="text" placeholder="Nombre del rol">
+                        </div>
+                        <div class="campo">
+                            <label for="horarioNuevoRolUnidad">Horario</label>
+                            <input id="horarioNuevoRolUnidad" type="text" placeholder="07:45 - 14:45">
+                        </div>
+                        <div class="campo">
+                            <label for="descripcionNuevoRolUnidad">Descripción</label>
+                            <input id="descripcionNuevoRolUnidad" type="text" placeholder="Opcional">
+                        </div>
+                    </div>
+                    <button id="crearRolUnidad" class="boton boton-secundario" type="button">Crear rol y añadirlo a la unidad</button>
+                </div>
+                <div class="eliminar-rol-unidad">
+                    <h3>Eliminar rol de una unidad</h3>
+                    <div class="nuevo-rol-unidad-grid">
+                        <div class="campo">
+                            <label for="unidadEliminarRol">Unidad</label>
+                            <select id="unidadEliminarRol"></select>
+                        </div>
+                        <div class="campo">
+                            <label for="codigoEliminarRolUnidad">Rol personalizado</label>
+                            <select id="codigoEliminarRolUnidad"></select>
+                        </div>
+                    </div>
+                    <p>Si ninguna otra unidad utiliza el rol, también se eliminará del catálogo y de las preferencias de empleados.</p>
+                    <button id="eliminarRolUnidad" class="boton boton-peligro" type="button">Eliminar rol de esta unidad</button>
                 </div>
                 <div id="configuracionUnidades" class="configuracion-unidades-lista"></div>
                 <button id="guardarConfiguracionUnidades" class="boton boton-secundario" type="button">
