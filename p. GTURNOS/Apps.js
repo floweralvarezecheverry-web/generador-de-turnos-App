@@ -98,6 +98,27 @@ const metricaDias = document.getElementById("metricaDias");
 const metricaCambios = document.getElementById("metricaCambios");
 const fechaInicioTurnos = document.getElementById("fechaInicioTurnos");
 const fechaFinTurnos = document.getElementById("fechaFinTurnos");
+const festivosTurnos = document.getElementById("festivosTurnos");
+const STORAGE_FESTIVOS_KEY = "festivosTurnos";
+if (festivosTurnos) {
+    festivosTurnos.value = localStorage.getItem(STORAGE_FESTIVOS_KEY) || "";
+    festivosTurnos.addEventListener("change", () => localStorage.setItem(STORAGE_FESTIVOS_KEY, festivosTurnos.value));
+}
+
+function obtenerFestivos() {
+    return new Set((festivosTurnos?.value || "").split(/[\s,;]+/).filter((valor) => /^\d{4}-\d{2}-\d{2}$/.test(valor)));
+}
+
+// Sábados, domingos y festivos: se cubren siempre y se reparten entre el equipo.
+function esDiaEspecial(fecha, festivos) {
+    const diaSemana = new Date(`${fecha.valor}T00:00:00`).getDay();
+    return diaSemana === 0 || diaSemana === 6 || festivos.has(fecha.valor);
+}
+
+function contarDiasEspecialesTrabajados(registro, fechasPeriodo, festivos) {
+    return registro.turnosOriginalesPorFecha.reduce((total, turno, indice) =>
+        total + (esDiaEspecial(fechasPeriodo[indice], festivos) && !["Descanso", "Libre", "Vacaciones"].includes(turno) ? 1 : 0), 0);
+}
 const archivoExcel = document.getElementById("archivoExcel");
 const fechaHoraActual = document.getElementById("fechaHoraActual");
 const botonTodosEmpleados = document.getElementById("botonTodosEmpleados");
@@ -2263,59 +2284,6 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                 turnosPorFecha.push(cambioManual && !vacacionesProtegidas ? cambioManual : turnoOriginal);
             });
 
-
-        function aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo) {
-            const turnosConfigurados = obtenerConfiguracionUnidad(unidad)?.turnos || [];
-            const turnosUnicos = [...new Set(turnosConfigurados.filter((turno) =>
-                turno !== "Vacaciones" && ["mañanas", "tardes"].includes(clasificarTurno(turno))
-            ))];
-            if (!turnosUnicos.length) return;
-
-            fechasPeriodo.forEach((_, dia) => {
-                const turnoDia = (registro) => registro.turnosOriginalesPorFecha[dia];
-                const trabajaEnUnidad = (registro) => unidadesSonIguales(registro.unidadesPorDia[dia] || registro.unidad, unidad);
-                const asignados = todosRegistros.filter((registro) => trabajaEnUnidad(registro) &&
-                    !["Descanso", "Libre", "Vacaciones"].includes(turnoDia(registro))
-                );
-                const ocupados = new Set();
-
-                asignados.forEach((registro) => {
-                    const turno = turnoDia(registro);
-                    if (!turnosUnicos.includes(turno) || ocupados.has(turno)) {
-                        registro.turnosOriginalesPorFecha[dia] = "Descanso";
-                        delete registro.unidadesPorDia[dia];
-                        return;
-                    }
-                    ocupados.add(turno);
-                });
-
-                turnosUnicos.forEach((turno) => {
-                    if (ocupados.has(turno)) return;
-                    const grupo = clasificarTurno(turno);
-                    const candidatos = todosRegistros
-                        .filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro)) && !registro.unidadesPorDia[dia])
-                        .filter((registro) => !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
-                        .filter((registro) => {
-                            const preferidos = expandirTurnosAgrupados(obtenerTurnosPreferidos(registro.regla));
-                            return preferidos.includes(turno) || nivelCobertura(registro, unidad) < 2 || !reglasGenerales.respetarPuesto.activa;
-                        })
-                        .map((registro) => ({
-                            registro,
-                            nivel: nivelCobertura(registro, unidad),
-                            horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla)
-                        }))
-                        .sort((a, b) => a.nivel - b.nivel || a.horas - b.horas);
-
-                    const asignado = candidatos.some(({ registro }) => intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo));
-                    if (asignado) {
-                        ocupados.add(turno);
-                    } else {
-                        const clave = `${unidad} (${turno})`;
-                        avisosCobertura.set(clave, (avisosCobertura.get(clave) || 0) + 1);
-                    }
-                });
-            });
-        }
             const horas = calcularHorasTurnos(turnosPorFecha, regla);
             asignaciones.push({
                 empleado,
@@ -2335,6 +2303,63 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
     return asignaciones;
 }
 
+function aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo) {
+    const turnosConfigurados = obtenerConfiguracionUnidad(unidad)?.turnos || [];
+    const turnosUnicos = [...new Set(turnosConfigurados.filter((turno) =>
+        turno !== "Vacaciones" && ["mañanas", "tardes"].includes(clasificarTurno(turno))
+    ))];
+    if (!turnosUnicos.length) return;
+
+    const festivos = obtenerFestivos();
+    fechasPeriodo.forEach((_, dia) => {
+        const especial = esDiaEspecial(fechasPeriodo[dia], festivos);
+        const ordenEspecial = (a, b) => libreFijo(a.registro, dia, fechasPeriodo) - libreFijo(b.registro, dia, fechasPeriodo) ||
+            contarDiasEspecialesTrabajados(a.registro, fechasPeriodo, festivos) - contarDiasEspecialesTrabajados(b.registro, fechasPeriodo, festivos);
+        const turnoDia = (registro) => registro.turnosOriginalesPorFecha[dia];
+        const trabajaEnUnidad = (registro) => unidadesSonIguales(registro.unidadesPorDia[dia] || registro.unidad, unidad);
+        const asignados = todosRegistros.filter((registro) => trabajaEnUnidad(registro) &&
+            !["Descanso", "Libre", "Vacaciones"].includes(turnoDia(registro))
+        );
+        const ocupados = new Set();
+
+        asignados.forEach((registro) => {
+            const turno = turnoDia(registro);
+            if (!turnosUnicos.includes(turno) || ocupados.has(turno)) {
+                registro.turnosOriginalesPorFecha[dia] = "Descanso";
+                delete registro.unidadesPorDia[dia];
+                return;
+            }
+            ocupados.add(turno);
+        });
+
+        turnosUnicos.forEach((turno) => {
+            if (ocupados.has(turno)) return;
+            const grupo = clasificarTurno(turno);
+            const candidatos = todosRegistros
+                .filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro)) && !registro.unidadesPorDia[dia])
+                .filter((registro) => especial || !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
+                .filter((registro) => {
+                    const preferidos = expandirTurnosAgrupados(obtenerTurnosPreferidos(registro.regla));
+                    return preferidos.includes(turno) || nivelCobertura(registro, unidad) < 2 || !reglasGenerales.respetarPuesto.activa;
+                })
+                .map((registro) => ({
+                    registro,
+                    nivel: nivelCobertura(registro, unidad),
+                    horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla)
+                }))
+                .sort((a, b) => a.nivel - b.nivel || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
+
+            const asignado = candidatos.some(({ registro }) => intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo));
+            if (asignado) {
+                ocupados.add(turno);
+            } else {
+                const clave = `${unidad} (${turno})`;
+                avisosCobertura.set(clave, (avisosCobertura.get(clave) || 0) + 1);
+            }
+        });
+    });
+}
+
 function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPeriodo) {
     const puestos = obtenerConfiguracionUnidad(unidad)?.puestos;
     if (!puestos || !registros.length) return;
@@ -2345,7 +2370,11 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
     if (maxManana === null && maxTarde === null && minDescanso === null) return;
     const maximos = { "mañanas": maxManana, tardes: maxTarde };
 
+    const festivos = obtenerFestivos();
     fechasPeriodo.forEach((_, dia) => {
+        const especial = esDiaEspecial(fechasPeriodo[dia], festivos);
+        const ordenEspecial = (a, b) => libreFijo(a.registro, dia, fechasPeriodo) - libreFijo(b.registro, dia, fechasPeriodo) ||
+            contarDiasEspecialesTrabajados(a.registro, fechasPeriodo, festivos) - contarDiasEspecialesTrabajados(b.registro, fechasPeriodo, festivos);
         const turnoDia = (registro) => registro.turnosOriginalesPorFecha[dia];
         const trabajaEn = (registro) => registro.unidadesPorDia[dia] || registro.unidad;
         const delGrupo = (grupo) => todosRegistros.filter((registro) => unidadesSonIguales(trabajaEn(registro), unidad) && clasificarTurno(turnoDia(registro)) === grupo);
@@ -2366,9 +2395,9 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
             delGrupo(grupo).forEach((registro) => usados.set(turnoDia(registro), (usados.get(turnoDia(registro)) || 0) + 1));
             const candidatos = todosRegistros
                 .filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro)) && !registro.unidadesPorDia[dia])
-                .filter((registro) => !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
+                .filter((registro) => especial || !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
                 .map((registro) => ({ registro, nivel: nivelCobertura(registro, unidad), horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla) }))
-                .sort((a, b) => a.nivel - b.nivel || a.horas - b.horas);
+                .sort((a, b) => a.nivel - b.nivel || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
             for (const { registro } of candidatos) {
                 if (faltan <= 0) break;
                 const turno = elegirTurnoCobertura(registro, unidad, grupo, usados);
@@ -2396,6 +2425,10 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
             descansando += 1;
         }
     });
+}
+
+function libreFijo(registro, dia, fechasPeriodo) {
+    return registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre) ? 1 : 0;
 }
 
 // 0: pertenece a la unidad, 1: la incluye en su rotaci\u00f3n, 2: otra unidad.
