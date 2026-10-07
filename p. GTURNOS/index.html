@@ -146,12 +146,80 @@
             <h2>Reglas de unidades y turnos</h2>
             <div class="pestanas-reglas" role="tablist" aria-label="Reglas de unidades">
                 <button class="pestana-reglas active" type="button" role="tab" aria-selected="true" data-reglas-tab="turnos">Turnos asignables</button>
-                <button class="pestana-reglas" type="button" role="tab" aria-selected="false" data-reglas-tab="puestos">Puestos requeridos</button>
+                <button class="pestana-reglas" type="button" role="tab" aria-selected="false" data-reglas-tab="puestos">Cobertura: puestos y días por rol</button>
             </div>
             <div data-reglas-panel="puestos" hidden>
-                <p>Indica cuántos empleados necesita cada unidad por día. El generador cubre esos puestos con empleados de la unidad o con quienes puedan cumplir el rol, y las personas sobrantes pasan a descanso. Deja el campo vacío para no limitar.</p>
-                <div id="configuracionPuestos" class="configuracion-unidades-lista"></div>
-                <button id="guardarPuestosUnidades" class="boton boton-secundario" type="button">Guardar puestos requeridos</button>
+                <section class="bloque-regla">
+                    <h3>Puestos requeridos por unidad</h3>
+                    <p class="ayuda-regla">Indica cuántos empleados necesita cada unidad por día. El generador aplica estos puestos de lunes a domingo, respetando los descansos y límites de las reglas generales; usa empleados de la unidad o personas que puedan cumplir el rol, y asigna el descanso al personal sobrante. Deja el campo vacío para no limitar.</p>
+                    <div id="configuracionPuestos" class="configuracion-unidades-lista"></div>
+                    <button id="guardarPuestosUnidades" class="boton boton-secundario" type="button">Guardar puestos requeridos</button>
+                </section>
+                <section class="bloque-regla" id="bloqueParejas">
+                    <h3>Parejas de turno (trabajo conjunto)</h3>
+                    <p class="ayuda-regla">Dos roles de una unidad los desempeñan las mismas dos personas durante N días seguidos; después la pareja rota a otros empleados. Los roles que no estén en ninguna pareja (por ejemplo M6) se reparten de forma aleatoria. Con la plantilla se fijan además 3 puestos de mañana y 2 de tarde.</p>
+                    <div class="parejas-estado">
+                        <button id="alternarParejas" class="boton boton-secundario" type="button" aria-pressed="false">Activar parejas</button>
+                        <span id="estadoParejas" class="parejas-etiqueta">Desactivado</span>
+                    </div>
+                    <div class="parejas-form">
+                        <div class="campo"><label for="parejaUnidad">Unidad</label><select id="parejaUnidad"></select></div>
+                        <div class="campo"><label for="parejaRolA">Rol A</label><select id="parejaRolA"></select></div>
+                        <div class="campo"><label for="parejaRolB">Rol B</label><select id="parejaRolB"></select></div>
+                        <div class="campo"><label for="parejaDias">Días seguidos</label><input id="parejaDias" type="number" min="1" step="1" value="3"></div>
+                    </div>
+                    <div class="dias-rol-acciones">
+                        <button id="agregarPareja" class="boton boton-secundario" type="button">Añadir pareja</button>
+                        <button id="plantillaParejas" class="boton boton-secundario" type="button">Plantilla: M4-M5 (3 días), T3-T4 (4 días), M6 aleatorio</button>
+                    </div>
+                    <ul id="listaParejas" class="lista-parejas"></ul>
+                </section>
+                <section class="bloque-regla">
+                    <h3>Días por rol y empleado</h3>
+                <p class="ayuda-regla">Asigna cuántos días del periodo desempeñará un empleado un rol concreto. Si escribes un código nuevo (empieza por M o T), rellena nombre y horario y el rol se crea y queda disponible para otros empleados. Al actualizar el cuadro, se reflejarán esos días en su fila (respetando vacaciones).</p>
+                <div class="dias-rol-form">
+                    <div class="campo">
+                        <label for="diasRolEmpleado">Empleado</label>
+                        <select id="diasRolEmpleado"></select>
+                    </div>
+                    <div class="campo">
+                        <label for="diasRolCodigo">Rol</label>
+                        <input id="diasRolCodigo" type="text" list="diasRolOpciones" autocomplete="off" placeholder="Código o doble clic" title="Escribe el código del rol o haz doble clic para ver la lista">
+                        <datalist id="diasRolOpciones"></datalist>
+                    </div>
+                    <div class="campo">
+                        <label for="diasRolDias">Días</label>
+                        <input id="diasRolDias" type="number" min="0" step="1" value="1">
+                    </div>
+                </div>
+                <div class="dias-rol-nuevo">
+                    <h4>Rol nuevo</h4>
+                    <p>Solo si el código del campo Rol no existe: indica su nombre y horario y pulsa «Cargar nuevo rol».</p>
+                    <div class="dias-rol-form">
+                        <div class="campo">
+                            <label for="diasRolNombre">Nombre</label>
+                            <input id="diasRolNombre" type="text" placeholder="Nombre del rol nuevo">
+                        </div>
+                        <div class="campo">
+                            <label for="diasRolHorario">Horario</label>
+                            <input id="diasRolHorario" type="text" placeholder="07:45 - 14:45">
+                        </div>
+                        <div class="campo campo-boton">
+                            <button id="cargarNuevoRolDias" class="boton boton-secundario" type="button">Cargar nuevo rol</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="dias-rol-acciones">
+                    <button id="agregarDiasRol" class="boton boton-secundario" type="button">Añadir regla de días por rol</button>
+                    <button id="verDiasRol" class="boton boton-secundario" type="button">Ver reglas (<span id="contadorDiasRol">0</span>)</button>
+                </div>
+                <dialog id="ventanaDiasRol" class="ventana-dias-rol">
+                    <h3>Reglas de días por rol</h3>
+                    <ul id="listaDiasRol"></ul>
+                    <p id="vacioDiasRol">No hay reglas definidas.</p>
+                    <button id="cerrarDiasRol" class="boton boton-secundario" type="button">Cerrar</button>
+                </dialog>
+                </section>
             </div>
             <div data-reglas-panel="turnos">
             <details class="configuracion-unidades">
@@ -260,10 +328,30 @@
                 <button id="botonActualizarCuadro" class="boton boton-secundario" type="button">
                     Actualizar cuadro
                 </button>
+                <button id="botonModoManual" class="boton boton-secundario" type="button" aria-pressed="false" aria-controls="panelManual">
+                    Modo manual: desactivado
+                </button>
+            </div>
+            <div id="panelManual" class="panel-manual" hidden>
+                <p class="ayuda-regla">Modo manual: la generación automática queda oculta y el cuadro se trabaja a mano (pulsa o arrastra las celdas). Guarda versiones, imprime o descarga el cuadro (el informe de horas está en la pestaña «Informe»).</p>
+                <div class="barra-manual">
+                    <input id="nombreCuadroGuardar" type="text" placeholder="Nombre del cuadro (opcional)" aria-label="Nombre del cuadro a guardar">
+                    <button id="botonCuadroBase" class="boton boton-secundario" type="button">Cargar cuadro base</button>
+                    <button id="botonLimpiarCuadro" class="boton boton-secundario" type="button">Limpiar cuadro</button>
+                    <button id="botonGuardarCuadro" class="boton boton-primario" type="button" disabled>Guardar cuadro</button>
+                    <button id="botonImprimirManual" class="boton boton-secundario" type="button" disabled>Imprimir</button>
+                    <button id="botonDescargarManual" class="boton boton-secundario" type="button" disabled>Descargar CSV</button>
+                </div>
+                <div class="guardados-manual">
+                    <label for="cuadrosGuardados">Cuadros guardados</label>
+                    <select id="cuadrosGuardados"></select>
+                    <button id="botonRecuperarCuadro" class="boton boton-secundario" type="button">Recuperar</button>
+                    <button id="botonEliminarCuadro" class="boton boton-peligro" type="button">Eliminar</button>
+                </div>
             </div>
         </section>
 
-        <section class="panel">
+        <section class="panel" id="seccionCuadro">
             <h2>Cuadrante de turnos</h2>
             <div class="cuadro-cabecera">
                 <div>
@@ -284,6 +372,22 @@
                 <div class="metrica-cuadro"><strong id="metricaUnidades">0</strong><span>unidades</span></div>
                 <div class="metrica-cuadro"><strong id="metricaDias">0</strong><span>días</span></div>
                 <div class="metrica-cuadro"><strong id="metricaCambios">0</strong><span>cambios manuales</span></div>
+            </div>
+            <div class="pestanas-cuadro" role="tablist" aria-label="Vistas del cuadrante">
+                <button id="pestanaVistaCuadro" class="pestana-cuadro activa" type="button" role="tab" aria-selected="true">Cuadro</button>
+                <button id="pestanaVistaInforme" class="pestana-cuadro" type="button" role="tab" aria-selected="false">Informe</button>
+            </div>
+            <div id="informeCuadro" class="informe-cuadro" hidden>
+                <div class="barra-informe">
+                    <button id="botonGenerarInforme" class="boton boton-primario" type="button" disabled>Generar informe</button>
+                    <button id="botonDescargarInforme" class="boton boton-secundario" type="button" disabled>Descargar informe CSV</button>
+                </div>
+                <p id="textoInformeVacio" class="ayuda-regla">Pulsa «Generar informe» para calcular horas trabajadas, días, descansos y avisos del cuadro actual. El informe no se incluye al imprimir ni al descargar el cuadro.</p>
+                <div id="resultadoInforme" hidden>
+                    <h3>Informe del cuadrante</h3>
+                    <div class="informe-tabla"><table id="tablaInforme"></table></div>
+                    <ul id="avisosInforme" class="avisos-informe"></ul>
+                </div>
             </div>
             <div id="cuadrosTurnos" class="cuadros-turnos"></div>
         </section>
@@ -461,6 +565,7 @@
             </div>
 
             <div class="modal-actions">
+                <button id="borrarCambioTurno" type="button" class="boton boton-peligro">Borrar turno</button>
                 <button id="guardarCambioTurno" type="button" class="boton boton-primario">Guardar cambio</button>
             </div>
         </div>

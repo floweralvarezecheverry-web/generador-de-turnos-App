@@ -7,6 +7,10 @@ const STORAGE_ORDEN_CUADROS_KEY = "ordenCuadrosTurnos";
 const STORAGE_ROLES_PERSONALIZADOS_KEY = "rolesPersonalizadosTurnos";
 const STORAGE_HORARIOS_MANUALES_KEY = "horariosManualesTurnos";
 const STORAGE_DETALLES_CAMBIOS_KEY = "detallesCambiosTurnos";
+const STORAGE_MODO_MANUAL_KEY = "modoManualTurnos";
+const STORAGE_CUADROS_GUARDADOS_KEY = "cuadrosGuardadosTurnos";
+const STORAGE_PAREJAS_KEY = "parejasTurnosTurnos";
+const STORAGE_DIAS_ROL_KEY = "diasPorRolTurnos";
 const STORAGE_REGLAS_GENERALES_KEY = "reglasGeneralesTurnos";
 const REGLAS_GENERALES_BASE = {
     descansoEntreTurnos: { activa: true, valor: 12 },
@@ -28,6 +32,24 @@ let nombresUnidades = cargarUnidadesGuardadas();
 let cambiosTurnosManuales = cargarCambiosManuales();
 let configuracionUnidades = cargarConfiguracionUnidades();
 let ordenCuadros = cargarOrdenCuadros();
+let diasPorRol = (() => {
+    try {
+        const datos = JSON.parse(localStorage.getItem(STORAGE_DIAS_ROL_KEY) || "[]");
+        return Array.isArray(datos) ? datos : [];
+    } catch (error) {
+        return [];
+    }
+})();
+
+let parejasTurno = (() => {
+    try {
+        const datos = JSON.parse(localStorage.getItem(STORAGE_PAREJAS_KEY) || "null");
+        return { activa: Boolean(datos?.activa), reglas: Array.isArray(datos?.reglas) ? datos.reglas : [] };
+    } catch (error) {
+        return { activa: false, reglas: [] };
+    }
+})();
+
 let rolesPersonalizadosGuardados = cargarRolesPersonalizadosGuardados();
 let horariosManualesTurnos = cargarHorariosManualesGuardados();
 let detallesCambiosManuales = cargarDetallesCambiosManuales();
@@ -109,9 +131,31 @@ function obtenerFestivos() {
     return new Set((festivosTurnos?.value || "").split(/[\s,;]+/).filter((valor) => /^\d{4}-\d{2}-\d{2}$/.test(valor)));
 }
 
+// Durante la generación se reutilizan catálogos, horarios y días de la semana ya calculados.
+let cacheGeneracion = null;
+
+function obtenerDiaSemanaFecha(valor) {
+    const cache = cacheGeneracion?.diasSemana;
+    let dia = cache?.get(valor);
+    if (dia === undefined) {
+        dia = new Date(`${valor}T00:00:00`).getDay();
+        cache?.set(valor, dia);
+    }
+    return dia;
+}
+
+function ejecutarConCacheGeneracion(funcion) {
+    cacheGeneracion = { diasSemana: new Map(), catalogos: new Map() };
+    try {
+        return funcion();
+    } finally {
+        cacheGeneracion = null;
+    }
+}
+
 // Sábados, domingos y festivos: se cubren siempre y se reparten entre el equipo.
 function esDiaEspecial(fecha, festivos) {
-    const diaSemana = new Date(`${fecha.valor}T00:00:00`).getDay();
+    const diaSemana = obtenerDiaSemanaFecha(fecha.valor);
     return diaSemana === 0 || diaSemana === 6 || festivos.has(fecha.valor);
 }
 
@@ -288,11 +332,26 @@ if (cuadrosTurnos) {
     cuadrosTurnos.addEventListener("dragend", limpiarEstadoArrastreCuadros);
     cuadrosTurnos.addEventListener("dragover", permitirSoltarCuadro);
     cuadrosTurnos.addEventListener("drop", soltarCuadro);
+    cuadrosTurnos.addEventListener("contextmenu", (event) => {
+        const celda = event.target.closest(".celda-turno-editable");
+        if (!celda || !celda.draggable) return;
+        event.preventDefault();
+        if (confirm(`¿Borrar el turno de ${celda.dataset.empleado} (${celda.dataset.fecha})?`)) {
+            borrarTurnoCelda(celda.dataset.empleado, celda.dataset.fecha);
+        }
+    });
 }
 
 if (cerrarModalCambioTurno) {
     cerrarModalCambioTurno.addEventListener("click", cerrarEditorCambioTurno);
 }
+
+document.getElementById("borrarCambioTurno")?.addEventListener("click", () => {
+    if (!cambioTurnoActivo) return;
+    const { empleado, fecha } = cambioTurnoActivo;
+    cerrarEditorCambioTurno();
+    borrarTurnoCelda(empleado, fecha);
+});
 
 if (guardarCambioTurno) {
     guardarCambioTurno.addEventListener("click", guardarCambioTurnoIndividual);
@@ -315,7 +374,7 @@ if (botonDescargar) {
 }
 
 if (botonImprimirCuadro) {
-    botonImprimirCuadro.addEventListener("click", () => window.print());
+    botonImprimirCuadro.addEventListener("click", () => imprimirSoloCuadro());
 }
 
 if (botonDescargarCuadro) {
@@ -528,12 +587,12 @@ function construirDescripcionCambioManual(detalle) {
 
 function cargarOrdenCuadros() {
     const guardado = localStorage.getItem(STORAGE_ORDEN_CUADROS_KEY);
-    const ordenPredeterminado = ["mañanas", "tardes", "noches", "otros"];
+    const ordenPredeterminado = ["mañanas", "tardes", "noches"];
     if (!guardado) return ordenPredeterminado;
 
     try {
         const orden = JSON.parse(guardado);
-        return Array.isArray(orden) ? [...new Set([...orden, ...ordenPredeterminado])] : ordenPredeterminado;
+        return Array.isArray(orden) ? [...new Set([...orden, ...ordenPredeterminado])].filter((grupo) => grupo !== "otros") : ordenPredeterminado;
     } catch (error) {
         console.error("No se pudo cargar el orden de los cuadros", error);
         return ordenPredeterminado;
@@ -628,6 +687,29 @@ function sincronizarConfiguracionUnidadesDesdeFormulario() {
     configuracionUnidades = normalizarConfiguracionUnidades({ ...configuracionUnidades, ...datos });
 }
 
+// Validación y alta de un rol personalizado, compartida por todos los formularios que crean roles.
+function registrarRolPersonalizado({ codigo, nombre, horario, descripcion }) {
+    if (!codigo || !nombre || !horario) {
+        alert("Completa el código, el nombre y el horario del rol");
+        return false;
+    }
+    if (!/^[MT][A-Z0-9-]{1,7}$/.test(codigo)) {
+        alert("El código debe empezar por M o T y tener entre 2 y 8 caracteres");
+        return false;
+    }
+    if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(horario)) {
+        alert("El horario debe tener el formato 07:45 - 14:45");
+        return false;
+    }
+    if (obtenerCatalogoTurnosEmpleado({}).some((turno) => turno.codigo.toUpperCase() === codigo)) {
+        alert("Ese código ya existe en la aplicación");
+        return false;
+    }
+    rolesPersonalizadosGuardados.push({ codigo, nombre, horario, descripcion: descripcion || "Rol personalizado" });
+    guardarRolesPersonalizados();
+    return true;
+}
+
 function crearRolParaUnidad() {
     const unidad = unidadNuevoRol?.value;
     const codigo = document.getElementById("codigoNuevoRolUnidad")?.value.trim().toUpperCase();
@@ -635,16 +717,8 @@ function crearRolParaUnidad() {
     const horario = document.getElementById("horarioNuevoRolUnidad")?.value.trim();
     const descripcion = document.getElementById("descripcionNuevoRolUnidad")?.value.trim() || "Rol personalizado";
 
-    if (!unidad || !codigo || !nombre || !horario) {
-        alert("Selecciona una unidad y completa el código, el nombre y el horario");
-        return;
-    }
-    if (!/^[MT][A-Z0-9-]{1,7}$/.test(codigo)) {
-        alert("El código debe empezar por M o T y tener entre 2 y 8 caracteres");
-        return;
-    }
-    if (catalogoTurnos.some((turno) => turno.codigo.toUpperCase() === codigo) || rolesPersonalizadosGuardados.some((turno) => turno.codigo.toUpperCase() === codigo)) {
-        alert("Ese código ya existe en la aplicación");
+    if (!unidad) {
+        alert("Selecciona una unidad");
         return;
     }
 
@@ -655,9 +729,8 @@ function crearRolParaUnidad() {
         return;
     }
 
-    rolesPersonalizadosGuardados.push({ codigo, nombre, horario, descripcion });
+    if (!registrarRolPersonalizado({ codigo, nombre, horario, descripcion })) return;
     configuracionUnidades[claveUnidad].turnos = [...new Set([...configuracionUnidades[claveUnidad].turnos, codigo])];
-    guardarRolesPersonalizados();
     localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
     renderizarConfiguracionUnidades();
     actualizarSelectorUnidades();
@@ -812,6 +885,8 @@ function renderizarConfiguracionUnidades() {
     actualizarSelectorUnidadEliminarRol();
     actualizarSelectorUnidadQuitar();
     renderizarPuestosUnidades();
+    renderizarDiasPorRol();
+    renderizarParejas();
 }
 
 function actualizarSelectorUnidadNuevoRol() {
@@ -934,6 +1009,393 @@ function guardarPuestosUnidades() {
     });
     localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
     alert("Puestos requeridos guardados. Pulsa Actualizar cuadro para aplicarlos.");
+}
+
+
+function guardarDiasPorRol() {
+    localStorage.setItem(STORAGE_DIAS_ROL_KEY, JSON.stringify(diasPorRol));
+}
+
+function obtenerRolesDiasPorRol() {
+    return [...catalogoTurnos, ...rolesPersonalizadosGuardados]
+        .filter((turno, i, todos) => turno.codigo !== "Vacaciones" && todos.findIndex((t) => t.codigo === turno.codigo) === i);
+}
+
+// Roles que encajan con el empleado: los de su unidad, los suyos propios y los creados globalmente.
+function obtenerRolesDiasPorRolEmpleado(empleado) {
+    const regla = reglasPorEmpleado[empleado];
+    const unidad = obtenerUnidadAsignada(regla, "");
+    const codigosUnidad = obtenerConfiguracionUnidad(unidad)?.turnos || [];
+    const propios = (regla?.reglasPersonalizadas || []).map((turno) => turno.codigo);
+    const globales = rolesPersonalizadosGuardados.map((turno) => turno.codigo);
+    const compatibles = new Set([...codigosUnidad, ...propios, ...globales]);
+    return obtenerRolesDiasPorRol().filter((turno) => compatibles.has(turno.codigo));
+}
+
+function renderizarDiasPorRol() {
+    const selEmpleado = document.getElementById("diasRolEmpleado");
+    const selCodigo = document.getElementById("diasRolCodigo");
+    const lista = document.getElementById("listaDiasRol");
+    if (!selEmpleado || !selCodigo || !lista) return;
+    const empleadoPrevio = selEmpleado.value;
+    selEmpleado.innerHTML = "";
+    empleados.forEach((empleado) => selEmpleado.appendChild(new Option(empleado, empleado)));
+    if (empleados.includes(empleadoPrevio)) selEmpleado.value = empleadoPrevio;
+    const opciones = document.getElementById("diasRolOpciones");
+    opciones.innerHTML = "";
+    const rolesEmpleado = selEmpleado.value ? obtenerRolesDiasPorRolEmpleado(selEmpleado.value) : [];
+    (rolesEmpleado.length ? rolesEmpleado : obtenerRolesDiasPorRol()).forEach((turno) => {
+        const opcion = new Option(turno.nombre || "", turno.codigo);
+        opciones.appendChild(opcion);
+    });
+
+    lista.innerHTML = "";
+    document.getElementById("contadorDiasRol").textContent = diasPorRol.length;
+    document.getElementById("vacioDiasRol").hidden = diasPorRol.length > 0;
+    diasPorRol.forEach((regla, indice) => {
+        const item = document.createElement("li");
+        item.textContent = `${regla.empleado}: ${regla.codigo} durante ${regla.dias} día(s) `;
+        const quitar = document.createElement("button");
+        quitar.type = "button";
+        quitar.className = "boton boton-peligro";
+        quitar.textContent = "Quitar";
+        quitar.addEventListener("click", () => {
+            diasPorRol.splice(indice, 1);
+            guardarDiasPorRol();
+            renderizarDiasPorRol();
+        });
+        item.appendChild(quitar);
+        lista.appendChild(item);
+    });
+}
+
+// Crea el rol escrito en el formulario si no existe y devuelve su código (o null si no es válido).
+function cargarNuevoRolDias(silenciarSiExiste = false) {
+    const escrito = document.getElementById("diasRolCodigo")?.value.trim().toUpperCase();
+    if (!escrito) {
+        alert("Escribe el código del rol");
+        return null;
+    }
+    const existente = obtenerRolesDiasPorRol().find((turno) => turno.codigo.toUpperCase() === escrito);
+    if (existente) {
+        if (!silenciarSiExiste) alert(`El rol ${existente.codigo} ya existe y está disponible para asignarlo`);
+        return existente.codigo;
+    }
+    const nombre = document.getElementById("diasRolNombre")?.value.trim();
+    const horario = document.getElementById("diasRolHorario")?.value.trim();
+    if (!registrarRolPersonalizado({ codigo: escrito, nombre, horario })) return null;
+    ["diasRolNombre", "diasRolHorario"].forEach((id) => { document.getElementById(id).value = ""; });
+    renderizarDiasPorRol();
+    renderizarConfiguracionUnidades();
+    if (!silenciarSiExiste) alert(`Rol ${escrito} cargado. Ya puedes asignarlo a cualquier empleado`);
+    return escrito;
+}
+
+function agregarDiasPorRol() {
+    const empleado = document.getElementById("diasRolEmpleado")?.value;
+    const escrito = document.getElementById("diasRolCodigo")?.value.trim().toUpperCase();
+    const dias = Math.floor(Number(document.getElementById("diasRolDias")?.value));
+    if (!empleado || !escrito || !Number.isFinite(dias) || dias < 0) {
+        alert("Selecciona un empleado, indica un rol y un número de días válido");
+        return;
+    }
+    const codigo = cargarNuevoRolDias(true);
+    if (!codigo) return;
+    const compatibles = obtenerRolesDiasPorRolEmpleado(empleado);
+    if (reglasGenerales.respetarPuesto.activa && compatibles.length && !compatibles.some((turno) => turno.codigo === codigo)) {
+        const unidad = obtenerUnidadAsignada(reglasPorEmpleado[empleado], "sin unidad");
+        if (!confirm(`${codigo} no pertenece a la unidad de ${empleado} (${unidad}). ¿Asignarlo igualmente?`)) return;
+    }
+    diasPorRol = diasPorRol.filter((regla) => !(regla.empleado === empleado && regla.codigo === codigo));
+    diasPorRol.push({ empleado, codigo, dias });
+    guardarDiasPorRol();
+    renderizarDiasPorRol();
+    document.getElementById("diasRolCodigo").value = "";
+    renderizarConfiguracionUnidades();
+}
+
+const campoRolDias = document.getElementById("diasRolCodigo");
+campoRolDias?.addEventListener("dblclick", () => {
+    campoRolDias.value = "";
+    campoRolDias.focus();
+    campoRolDias.showPicker?.();
+});
+const ventanaDiasRol = document.getElementById("ventanaDiasRol");
+document.getElementById("verDiasRol")?.addEventListener("click", () => ventanaDiasRol?.showModal());
+document.getElementById("cerrarDiasRol")?.addEventListener("click", () => ventanaDiasRol?.close());
+ventanaDiasRol?.addEventListener("click", (evento) => {
+    if (evento.target === ventanaDiasRol) ventanaDiasRol.close();
+});
+document.getElementById("cargarNuevoRolDias")?.addEventListener("click", () => {
+    if (cargarNuevoRolDias()) document.getElementById("diasRolCodigo").value = "";
+});
+document.getElementById("agregarDiasRol")?.addEventListener("click", agregarDiasPorRol);
+document.getElementById("diasRolEmpleado")?.addEventListener("change", renderizarDiasPorRol);
+renderizarDiasPorRol();
+
+// ---- Parejas de turno ----
+function guardarParejas() {
+    localStorage.setItem(STORAGE_PAREJAS_KEY, JSON.stringify(parejasTurno));
+}
+
+function obtenerRolesUnidadPareja(unidad) {
+    return (configuracionUnidades[unidad]?.turnos || []).filter((turno) =>
+        ["mañanas", "tardes"].includes(clasificarTurno(turno)) && turno !== "Vacaciones");
+}
+
+function renderizarParejas() {
+    const selUnidad = document.getElementById("parejaUnidad");
+    const selA = document.getElementById("parejaRolA");
+    const selB = document.getElementById("parejaRolB");
+    const lista = document.getElementById("listaParejas");
+    if (!selUnidad || !selA || !selB || !lista) return;
+    const previa = selUnidad.value;
+    selUnidad.innerHTML = "";
+    const unidades = ordenarUnidades(Object.keys(configuracionUnidades), (unidad) => unidad);
+    unidades.forEach((unidad) => selUnidad.appendChild(new Option(unidad, unidad)));
+    if (unidades.includes(previa)) selUnidad.value = previa;
+    const rolA = selA.value, rolB = selB.value;
+    [selA, selB].forEach((sel) => {
+        sel.innerHTML = "";
+        obtenerRolesUnidadPareja(selUnidad.value).forEach((rol) => sel.appendChild(new Option(rol, rol)));
+    });
+    if ([...selA.options].some((o) => o.value === rolA)) selA.value = rolA;
+    if ([...selB.options].some((o) => o.value === rolB)) selB.value = rolB;
+    else if (selB.options.length > 1 && selA.value === selB.value) selB.selectedIndex = 1;
+
+    const boton = document.getElementById("alternarParejas");
+    boton.textContent = parejasTurno.activa ? "Desactivar parejas" : "Activar parejas";
+    boton.setAttribute("aria-pressed", String(parejasTurno.activa));
+    boton.classList.toggle("boton-activo", parejasTurno.activa);
+    const estado = document.getElementById("estadoParejas");
+    estado.textContent = parejasTurno.activa ? "Activado" : "Desactivado";
+    estado.classList.toggle("activo", parejasTurno.activa);
+
+    lista.innerHTML = "";
+    parejasTurno.reglas.forEach((regla, indice) => {
+        const item = document.createElement("li");
+        item.textContent = `${regla.unidad}: ${regla.a} + ${regla.b} juntos ${regla.dias} día(s) seguidos `;
+        const quitar = document.createElement("button");
+        quitar.type = "button";
+        quitar.className = "boton boton-peligro";
+        quitar.textContent = "Quitar";
+        quitar.addEventListener("click", () => {
+            parejasTurno.reglas.splice(indice, 1);
+            guardarParejas();
+            renderizarParejas();
+        });
+        item.appendChild(quitar);
+        lista.appendChild(item);
+    });
+}
+
+function anadirReglaPareja({ unidad, a, b, dias }) {
+    if (parejasTurno.reglas.some((r) => r.unidad === unidad && ((r.a === a && r.b === b) || (r.a === b && r.b === a)))) {
+        parejasTurno.reglas = parejasTurno.reglas.filter((r) => !(r.unidad === unidad && ((r.a === a && r.b === b) || (r.a === b && r.b === a))));
+    }
+    // Un rol solo puede pertenecer a una pareja por unidad.
+    const ocupado = parejasTurno.reglas.find((r) => r.unidad === unidad && [a, b].some((rol) => [r.a, r.b].includes(rol)));
+    if (ocupado) {
+        alert(`Un rol de esta pareja ya está en ${ocupado.a} + ${ocupado.b}. Quita esa pareja primero.`);
+        return false;
+    }
+    parejasTurno.reglas.push({ unidad, a, b, dias });
+    return true;
+}
+
+function agregarPareja() {
+    const unidad = document.getElementById("parejaUnidad").value;
+    const a = document.getElementById("parejaRolA").value;
+    const b = document.getElementById("parejaRolB").value;
+    const dias = Math.floor(Number(document.getElementById("parejaDias").value));
+    if (!unidad || !a || !b || a === b || !(dias >= 1)) {
+        alert("Elige una unidad, dos roles distintos y al menos 1 día.");
+        return;
+    }
+    if (clasificarTurno(a) !== clasificarTurno(b)) {
+        alert("Los dos roles de una pareja deben ser de la misma franja (mañana o tarde).");
+        return;
+    }
+    if (!anadirReglaPareja({ unidad, a, b, dias })) return;
+    guardarParejas();
+    renderizarParejas();
+}
+
+function aplicarPlantillaParejas() {
+    const unidad = document.getElementById("parejaUnidad").value;
+    const roles = obtenerRolesUnidadPareja(unidad);
+    const faltan = ["M4", "M5", "M6", "T3", "T4"].filter((rol) => !roles.includes(rol));
+    if (!unidad || faltan.length) {
+        alert(`${unidad || "La unidad"} no tiene los roles ${faltan.join(", ")}. Actívalos en «Turnos asignables».`);
+        return;
+    }
+    parejasTurno.reglas = parejasTurno.reglas.filter((r) => r.unidad !== unidad);
+    anadirReglaPareja({ unidad, a: "M4", b: "M5", dias: 3 });
+    anadirReglaPareja({ unidad, a: "T3", b: "T4", dias: 4 });
+    parejasTurno.activa = true;
+    configuracionUnidades[unidad].puestos = { ...(configuracionUnidades[unidad].puestos || {}), manana: 3, tarde: 2 };
+    localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
+    guardarParejas();
+    renderizarParejas();
+    renderizarPuestosUnidades();
+}
+
+document.getElementById("alternarParejas")?.addEventListener("click", () => {
+    parejasTurno.activa = !parejasTurno.activa;
+    guardarParejas();
+    renderizarParejas();
+});
+document.getElementById("parejaUnidad")?.addEventListener("change", renderizarParejas);
+document.getElementById("agregarPareja")?.addEventListener("click", agregarPareja);
+document.getElementById("plantillaParejas")?.addEventListener("click", aplicarPlantillaParejas);
+renderizarParejas();
+
+// Asigna a las mismas dos personas los roles de cada pareja durante bloques de N días seguidos.
+// Se ejecuta antes de los roles únicos, que completan después los roles sin pareja (aleatorios).
+function aplicarParejasTurno(unidad, registrosUnidad, todosRegistros, fechasPeriodo) {
+    if (!parejasTurno.activa) return;
+    const rolesUnidad = obtenerRolesUnidadPareja(unidad);
+    const reglas = parejasTurno.reglas.filter((r) => r.unidad === unidad && rolesUnidad.includes(r.a) && rolesUnidad.includes(r.b));
+    if (!reglas.length) return;
+    const festivos = obtenerFestivos();
+
+    // Los roles de una pareja solo pueden tenerlos sus miembros: se vacían antes de asignar.
+    const rolesPareja = new Set(reglas.flatMap((regla) => [regla.a, regla.b]));
+    todosRegistros.forEach((registro) => {
+        registro.turnosOriginalesPorFecha.forEach((turno, i) => {
+            if (rolesPareja.has(turno) && unidadesSonIguales(registro.unidadesPorDia[i] || registro.unidad, unidad)) {
+                registro.turnosOriginalesPorFecha[i] = "Descanso";
+                delete registro.unidadesPorDia[i];
+            }
+        });
+    });
+
+    // Los bloques de todas las parejas se resuelven por orden cronológico para repartir la disponibilidad.
+    const bloques = [];
+    reglas.forEach((regla, indiceRegla) => {
+        for (let inicio = 0, n = 0; inicio < fechasPeriodo.length; inicio += regla.dias, n++) {
+            bloques.push({ regla, indiceRegla, inicio, fin: Math.min(inicio + regla.dias, fechasPeriodo.length), n });
+        }
+    });
+    bloques.sort((x, y) => x.inicio - y.inicio || x.indiceRegla - y.indiceRegla);
+    const usos = reglas.map(() => new Map(registrosUnidad.map((registro) => [registro, 0])));
+
+    // Intenta fijar el rol en todo el bloque; devuelve cómo deshacerlo o null si no es posible.
+    const intentar = (registro, rol, inicio, fin) => {
+        const copia = [...registro.turnosOriginalesPorFecha];
+        const restaurar = () => copia.forEach((valor, i) => { registro.turnosOriginalesPorFecha[i] = valor; });
+        const deshacer = () => {
+            restaurar();
+            for (let dia = inicio; dia < fin; dia++) registro.parejaDias?.delete(dia);
+        };
+        for (let dia = inicio; dia < fin; dia++) {
+            const fijoLibre = !esDiaEspecial(fechasPeriodo[dia], festivos) &&
+                registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre);
+            if (registro.turnosOriginalesPorFecha[dia] === "Vacaciones" || fijoLibre || registro.parejaDias?.has(dia) ||
+                !intentarAsignarCobertura(registro, dia, rol, unidad, fechasPeriodo)) {
+                restaurar();
+                return null;
+            }
+        }
+        for (let dia = inicio; dia < fin; dia++) (registro.parejaDias ||= new Set()).add(dia);
+        return deshacer;
+    };
+
+    bloques.forEach(({ regla, indiceRegla, inicio, fin, n }) => {
+        const total = registrosUnidad.length;
+        const huecos = (registro) => registro.turnosOriginalesPorFecha.slice(inicio, fin).filter((turno) => ["Descanso", "Libre"].includes(turno)).length;
+        // Menos usos primero, luego quien ya trabaja esos días, rotando el desempate entre bloques.
+        const orden = registrosUnidad
+            .map((registro, i) => ({ registro, usos: usos[indiceRegla].get(registro), huecos: huecos(registro), rot: (i + n * 2) % total }))
+            .sort((x, y) => x.usos - y.usos || x.huecos - y.huecos || x.rot - y.rot)
+            .map((x) => x.registro);
+        let pareja = null;
+        for (const primero of orden) {
+            const deshacerPrimero = intentar(primero, regla.a, inicio, fin);
+            if (!deshacerPrimero) continue;
+            const segundo = orden.find((candidato) => candidato !== primero && intentar(candidato, regla.b, inicio, fin));
+            if (segundo) {
+                pareja = [primero, segundo];
+                break;
+            }
+            deshacerPrimero();
+        }
+        if (pareja) {
+            pareja.forEach((registro) => usos[indiceRegla].set(registro, usos[indiceRegla].get(registro) + 1));
+        } else {
+            const clave = `${unidad} (pareja ${regla.a}+${regla.b})`;
+            avisosCobertura.set(clave, (avisosCobertura.get(clave) || 0) + 1);
+        }
+    });
+}
+
+function aplicarDiasPorRol(todosRegistros, fechasPeriodo) {
+    const festivos = obtenerFestivos();
+    const trabaja = (turno) => !["Descanso", "Libre", "Vacaciones"].includes(turno);
+    const descansa = (turno) => ["Descanso", "Libre"].includes(turno);
+    const reglasValidas = diasPorRol.filter((regla) =>
+        obtenerCatalogoTurnosEmpleado({}).some((turno) => turno.codigo === regla.codigo)
+    );
+
+    // Primero se recortan los excesos para que los días liberados puedan reutilizarse.
+    reglasValidas.forEach(({ empleado, codigo, dias }) => {
+        const registro = todosRegistros.find((item) => item.empleado === empleado);
+        if (!registro) return;
+        registro.turnosOriginalesPorFecha
+            .map((turno, i) => (turno === codigo ? i : -1))
+            .filter((i) => i >= 0)
+            .slice(dias)
+            .forEach((i) => {
+                registro.turnosOriginalesPorFecha[i] = "Descanso";
+                delete registro.unidadesPorDia[i];
+            });
+    });
+
+    reglasValidas.forEach(({ empleado, codigo, dias }) => {
+        const registro = todosRegistros.find((item) => item.empleado === empleado);
+        if (!registro) return;
+        const turnos = registro.turnosOriginalesPorFecha;
+        const grupo = clasificarTurno(codigo);
+        const puestos = obtenerConfiguracionUnidad(registro.unidad)?.puestos || {};
+        const limite = (valor) => (valor === null || valor === undefined || valor === "" || !Number.isFinite(Number(valor)) ? null : Math.max(0, Number(valor)));
+        const maxGrupo = grupo === "mañanas" ? limite(puestos.manana) : grupo === "tardes" ? limite(puestos.tarde) : null;
+        const minDescanso = limite(puestos.descanso);
+        const otrosCodigos = new Set(reglasValidas.filter((r) => r.empleado === empleado && r.codigo !== codigo).map((r) => r.codigo));
+        const mismaUnidad = (otro, i) => unidadesSonIguales(otro.unidadesPorDia[i] || otro.unidad, registro.unidad);
+        const equipo = todosRegistros.filter((otro) => unidadesSonIguales(otro.unidad, registro.unidad));
+
+        const permitido = (i) => {
+            const actual = turnos[i];
+            if (actual === codigo || actual === "Vacaciones" || otrosCodigos.has(actual) || registro.unidadesPorDia[i]) return false;
+            if (todosRegistros.some((otro) => otro !== registro && mismaUnidad(otro, i) && otro.turnosOriginalesPorFecha[i] === codigo)) return false;
+            const especial = esDiaEspecial(fechasPeriodo[i], festivos);
+            if (!especial && registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[i].nombre)) return false;
+            if (maxGrupo !== null && clasificarTurno(actual) !== grupo) {
+                const ocupados = todosRegistros.filter((otro) => otro !== registro && mismaUnidad(otro, i) && clasificarTurno(otro.turnosOriginalesPorFecha[i]) === grupo).length;
+                if (ocupados >= maxGrupo) return false;
+            }
+            if (minDescanso !== null && descansa(actual)) {
+                const descansando = equipo.filter((otro) => descansa(otro.turnosOriginalesPorFecha[i])).length;
+                if (descansando - 1 < minDescanso) return false;
+            }
+            return true;
+        };
+        const contar = () => turnos.filter((turno) => turno === codigo).length;
+
+        for (let ronda = 0; ronda < turnos.length && contar() < dias; ronda++) {
+            const candidatos = turnos.map((_, i) => i).filter(permitido)
+                .sort((a, b) => (descansa(turnos[a]) - descansa(turnos[b])) || a - b);
+            // Se reparten los días a lo largo del periodo en lugar de agruparlos al principio.
+            const paso = Math.max(1, Math.floor(candidatos.length / Math.max(1, dias - contar())));
+            const ordenados = candidatos.filter((_, k) => k % paso === 0).concat(candidatos.filter((_, k) => k % paso !== 0));
+            const asignado = ordenados.some((i) => intentarAsignarCobertura(registro, i, codigo, registro.unidad, fechasPeriodo));
+            if (!asignado) break;
+        }
+        const faltan = dias - contar();
+        if (faltan > 0) {
+            avisosCobertura.set(`${empleado}: ${codigo} por regla de días`, faltan);
+        }
+    });
 }
 
 function cambiarPestanaReglas(nombre) {
@@ -1117,6 +1579,7 @@ function mostrarResponsabilidadesCargo(cargo) {
 }
 
 function mostrarEmpleados() {
+    renderizarDiasPorRol();
     if (!listaEmpleados) return;
 
     listaEmpleados.innerHTML = "";
@@ -1277,6 +1740,8 @@ function eliminarEmpleadoDesdeLista(nombre) {
     if (!confirmado) return;
 
     empleados = empleados.filter((empleado) => empleado !== nombre);
+    diasPorRol = diasPorRol.filter((regla) => regla.empleado !== nombre);
+    guardarDiasPorRol();
     delete reglasPorEmpleado[nombre];
     Object.keys(cambiosTurnosManuales).forEach((clave) => {
         if (clave.startsWith(`${nombre}::`)) delete cambiosTurnosManuales[clave];
@@ -1769,6 +2234,10 @@ function renombrarEmpleado(anterior, nuevo) {
     historialCambios.length = 0;
     actualizarBotonDeshacer();
     empleados = empleados.map((nombre) => (nombre === anterior ? nuevo : nombre));
+    diasPorRol.forEach((regla) => {
+        if (regla.empleado === anterior) regla.empleado = nuevo;
+    });
+    guardarDiasPorRol();
     if (reglasPorEmpleado[anterior]) {
         reglasPorEmpleado[nuevo] = reglasPorEmpleado[anterior];
         delete reglasPorEmpleado[anterior];
@@ -1875,6 +2344,7 @@ function guardarCambiosEmpleado() {
     historialCambios.length = 0;
     actualizarBotonDeshacer();
     mostrarEmpleados();
+    renderizarDiasPorRol();
     abrirModalEmpleado(empleado);
     alert("Cambios guardados correctamente");
 }
@@ -1899,6 +2369,9 @@ function eliminarRolPersonalizado(codigo, empleadoActual) {
 }
 
 function quitarRolPersonalizadoDelCatalogo(codigo) {
+    diasPorRol = diasPorRol.filter((regla) => regla.codigo !== codigo);
+    guardarDiasPorRol();
+    renderizarDiasPorRol();
     rolesPersonalizadosGuardados = rolesPersonalizadosGuardados.filter((item) => item.codigo !== codigo);
     Object.values(reglasPorEmpleado).forEach((regla) => {
         if (Array.isArray(regla.reglasPersonalizadas)) {
@@ -1917,6 +2390,9 @@ function eliminarHorarioTrabajo(horario, empleadoActual) {
     const rolesHorario = rolesPersonalizadosGuardados.filter((rol) => rol.horario === horario);
     if (!rolesHorario.length || !window.confirm(`¿Quieres eliminar el horario ${horario} y sus roles personalizados?`)) return;
     const codigos = new Set(rolesHorario.map((rol) => rol.codigo));
+    diasPorRol = diasPorRol.filter((regla) => !codigos.has(regla.codigo));
+    guardarDiasPorRol();
+    renderizarDiasPorRol();
     rolesPersonalizadosGuardados = rolesPersonalizadosGuardados.filter((rol) => !codigos.has(rol.codigo));
     Object.values(reglasPorEmpleado).forEach((regla) => {
         if (Array.isArray(regla.reglasPersonalizadas)) regla.reglasPersonalizadas = regla.reglasPersonalizadas.filter((rol) => !codigos.has(rol.codigo));
@@ -2062,6 +2538,8 @@ function eliminarEmpleado() {
     if (!confirmado) return;
 
     empleados = empleados.filter((empleado) => empleado !== nombre);
+    diasPorRol = diasPorRol.filter((regla) => regla.empleado !== nombre);
+    guardarDiasPorRol();
     delete reglasPorEmpleado[nombre];
     Object.keys(cambiosTurnosManuales).forEach((clave) => {
         if (clave.startsWith(`${nombre}::`)) delete cambiosTurnosManuales[clave];
@@ -2182,14 +2660,14 @@ function generarTurnos() {
     const fechasPeriodo = obtenerFechasPeriodo(fechaInicio, fechaFin);
     fechasPeriodoActual = fechasPeriodo;
     cuadrosTurnos.innerHTML = "";
-    const asignaciones = construirAsignaciones(empleadosActivos, fechasPeriodo);
+    const asignaciones = ejecutarConCacheGeneracion(() => construirAsignaciones(empleadosActivos, fechasPeriodo));
 
     asignacionesActuales = asignaciones;
     prepararTurnosIndividuales();
     actualizarResumenCuadro(asignaciones, fechasPeriodo, filtroUnidad);
 
     ordenCuadros.forEach((grupo) => {
-        if (grupo !== "tardes") {
+        if (grupo !== "tardes" && grupo !== "otros") {
             renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo);
         }
     });
@@ -2258,8 +2736,8 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
 
             const porcentaje = obtenerPorcentajeJornada(regla);
             const limiteHoras = reglasGenerales.maxHorasAnuales.valor * (porcentaje / 100) * (fechasPeriodo.length / 365);
-            aplicarReglasDescanso(turnosOriginalesPorFecha, regla, limiteHoras, fechasPeriodo, porcentaje);
-            const registro = { empleado, unidad, regla, porcentaje, limiteHoras, turnosOriginalesPorFecha, unidadesPorDia: {} };
+            aplicarReglasDescanso(turnosOriginalesPorFecha, regla, limiteHoras, fechasPeriodo, porcentaje, indiceEmpleado);
+            const registro = { empleado, unidad, regla, porcentaje, limiteHoras, indiceRotacion: indiceEmpleado, turnosOriginalesPorFecha, unidadesPorDia: {} };
             registrosUnidad.push(registro);
             todosRegistros.push(registro);
             indiceEmpleado += 1;
@@ -2268,20 +2746,40 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
     });
 
     registrosPorUnidad.forEach(([unidad, registrosUnidad]) => {
-        aplicarPuestosRequeridos(unidad, registrosUnidad, todosRegistros, fechasPeriodo);
+        aplicarParejasTurno(unidad, registrosUnidad, todosRegistros, fechasPeriodo);
     });
 
     registrosPorUnidad.forEach(([unidad]) => {
         aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo);
     });
 
+    registrosPorUnidad.forEach(([unidad, registrosUnidad]) => {
+        aplicarPuestosRequeridos(unidad, registrosUnidad, todosRegistros, fechasPeriodo);
+    });
+
+    aplicarDiasPorRol(todosRegistros, fechasPeriodo);
+
     todosRegistros.forEach(({ empleado, unidad, regla, porcentaje, limiteHoras, turnosOriginalesPorFecha, unidadesPorDia }) => {
         {
             const turnosPorFecha = [];
             turnosOriginalesPorFecha.forEach((turnoOriginal, indiceDia) => {
-                const cambioManual = cambiosTurnosManuales[claveCambioTurno(empleado, fechasPeriodo[indiceDia].valor)];
+                const claveManual = claveCambioTurno(empleado, fechasPeriodo[indiceDia].valor);
+                const cambioManual = cambiosTurnosManuales[claveManual];
                 const vacacionesProtegidas = reglasGenerales.vacacionesImpidenTurno.activa && turnoOriginal === "Vacaciones";
-                turnosPorFecha.push(cambioManual && !vacacionesProtegidas ? cambioManual : turnoOriginal);
+                if (cambioManual && !vacacionesProtegidas) {
+                    // El cambio manual solo afecta a esta celda: libera el puesto automático y fija
+                    // la unidad del día sin tocar la unidad base ni a los demás empleados.
+                    const unidadManual = detallesCambiosManuales[claveManual]?.unidadNueva;
+                    const descansa = ["Descanso", "Libre", "Vacaciones"].includes(cambioManual);
+                    if (descansa || !unidadManual || unidadesSonIguales(unidadManual, unidad)) {
+                        delete unidadesPorDia[indiceDia];
+                    } else {
+                        unidadesPorDia[indiceDia] = unidadManual;
+                    }
+                    turnosPorFecha.push(cambioManual);
+                } else {
+                    turnosPorFecha.push(turnoOriginal);
+                }
             });
 
             const horas = calcularHorasTurnos(turnosPorFecha, regla);
@@ -2384,11 +2882,33 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
         ["mañanas", "tardes"].forEach((grupo) => {
             const maximo = maximos[grupo];
             if (maximo === null) return;
-            rotar(delGrupo(grupo)).slice(maximo).forEach((registro) => {
+            rotar(delGrupo(grupo)).slice(maximo).filter((registro) => !registro.parejaDias?.has(dia)).forEach((registro) => {
                 registro.turnosOriginalesPorFecha[dia] = "Descanso";
                 delete registro.unidadesPorDia[dia];
             });
+        });
 
+        if (minDescanso !== null) {
+            let descansando = registros.filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro))).length;
+            while (descansando < minDescanso) {
+                const manana = delGrupo("mañanas");
+                const tarde = delGrupo("tardes");
+                const origen = manana.length >= tarde.length ? manana : tarde;
+                if (!origen.length) break;
+                const elegido = rotar(origen).find((registro) => !registro.parejaDias?.has(dia));
+                if (!elegido) break;
+                elegido.turnosOriginalesPorFecha[dia] = "Descanso";
+                delete elegido.unidadesPorDia[dia];
+                descansando += 1;
+            }
+        }
+
+        const maximoTrabajando = minDescanso === null
+            ? Infinity
+            : Math.max(0, registros.length - minDescanso);
+        ["mañanas", "tardes"].forEach((grupo) => {
+            const maximo = maximos[grupo];
+            if (maximo === null) return;
             let faltan = maximo - delGrupo(grupo).length;
             if (faltan <= 0) return;
             const usados = new Map();
@@ -2400,30 +2920,23 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
                 .sort((a, b) => a.nivel - b.nivel || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
             for (const { registro } of candidatos) {
                 if (faltan <= 0) break;
+                const trabajando = registros.filter((item) => !["Descanso", "Libre", "Vacaciones"].includes(turnoDia(item))).length;
+                if (trabajando >= maximoTrabajando) break;
                 const turno = elegirTurnoCobertura(registro, unidad, grupo, usados);
                 if (turno && intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo)) {
                     usados.set(turno, (usados.get(turno) || 0) + 1);
                     faltan -= 1;
                 }
             }
-            if (faltan > 0) {
+        });
+
+        ["mañanas", "tardes"].forEach((grupo) => {
+            const maximo = maximos[grupo];
+            if (maximo !== null && delGrupo(grupo).length < maximo) {
                 const clave = `${unidad} (${grupo === "mañanas" ? "mañana" : "tarde"})`;
                 avisosCobertura.set(clave, (avisosCobertura.get(clave) || 0) + 1);
             }
         });
-
-        if (minDescanso === null) return;
-        let descansando = registros.filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro))).length;
-        while (descansando < minDescanso) {
-            const manana = delGrupo("mañanas");
-            const tarde = delGrupo("tardes");
-            const origen = manana.length >= tarde.length ? manana : tarde;
-            if (!origen.length) break;
-            const elegido = rotar(origen)[0];
-            elegido.turnosOriginalesPorFecha[dia] = "Descanso";
-            delete elegido.unidadesPorDia[dia];
-            descansando += 1;
-        }
     });
 }
 
@@ -2445,6 +2958,10 @@ function elegirTurnoCobertura(registro, unidad, grupo, usados) {
     let opciones = opcionesUnidad.filter((turno) => propios.includes(turno));
     const perteneceAUnidad = nivelCobertura(registro, unidad) < 2;
     if (!opciones.length && (perteneceAUnidad || !reglasGenerales.respetarPuesto.activa)) opciones = opcionesUnidad;
+    const turnosUnicos = new Set((obtenerConfiguracionUnidad(unidad)?.turnos || []).filter((turno) =>
+        turno !== "Vacaciones" && ["mañanas", "tardes"].includes(clasificarTurno(turno))
+    ));
+    opciones = opciones.filter((turno) => !turnosUnicos.has(turno) || !usados.get(turno));
     if (!opciones.length) return null;
     return opciones.slice().sort((a, b) => (usados.get(a) || 0) - (usados.get(b) || 0))[0];
 }
@@ -2454,7 +2971,7 @@ function intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo) {
     const previo = original[dia];
     const normalizar = (turnos) => {
         const copia = [...turnos];
-        aplicarReglasDescanso(copia, registro.regla, registro.limiteHoras, fechasPeriodo, registro.porcentaje);
+        aplicarReglasDescanso(copia, registro.regla, registro.limiteHoras, fechasPeriodo, registro.porcentaje, registro.indiceRotacion);
         return copia;
     };
     const base = normalizar(original);
@@ -2464,6 +2981,8 @@ function intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo) {
     // Los d\u00edas posteriores a\u00fan no revisados pueden pasar a descanso; los anteriores no deben cambiar.
     const sinConflicto = resultado.every((valor, indice) => {
         if (indice === dia) return valor === turno;
+        // Los días ya fijados por una pareja no pueden alterarse.
+        if (registro.parejaDias?.has(indice)) return valor === base[indice];
         if (indice > dia && valor === "Descanso") return true;
         return valor === base[indice];
     });
@@ -2485,22 +3004,21 @@ function intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo) {
 }
 
 function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
-    const gruposMostrados = grupo === "mañanas" ? ["mañanas", "tardes"] : [grupo];
+    const gruposMostrados = grupo === "mañanas" ? ["mañanas", "tardes", "sin-turno"] : [grupo];
+    const sinTurnoAlguno = (asignacion) => !asignacion.turnos.some((turno) => ["mañanas", "tardes", "noches"].includes(clasificarTurno(turno)));
     const tieneVacanteEnGrupo = (asignacion) => (asignacion.turnosOriginales || []).some((turnoOriginal, indice) => {
         if (!gruposMostrados.includes(clasificarTurno(turnoOriginal))) return false;
         const claveDia = claveCambioTurno(asignacion.empleado, fechasPeriodo[indice]?.valor);
         return Boolean(detallesCambiosManuales[claveDia]);
     });
     const asignacionesGrupo = asignaciones.filter((asignacion) => {
+        if (grupo === "mañanas" && sinTurnoAlguno(asignacion)) return true;
         return asignacion.turnos.some((turno) => gruposMostrados.includes(clasificarTurno(turno))) || tieneVacanteEnGrupo(asignacion);
     });
-    if (!asignacionesGrupo.length && grupo === "otros") return;
-
     const nombresGrupo = {
         mañanas: "☀️ / 🌇 Turnos por unidad",
         tardes: "🌇 Tardes",
-        noches: "🌙 Noches",
-        otros: "🗒️ Otros turnos"
+        noches: "🌙 Noches"
     };
     const bloque = document.createElement("section");
     bloque.className = "bloque-turnos";
@@ -2563,6 +3081,7 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
 
         gruposMostrados.forEach((grupoMostrado) => {
             const empleadosTurno = empleadosUnidad.filter((asignacion) => {
+                if (grupoMostrado === "sin-turno") return sinTurnoAlguno(asignacion);
                 return asignacion.turnos.some((turno) => clasificarTurno(turno) === grupoMostrado) ||
                     (asignacion.turnosOriginales || []).some((turnoOriginal, indice) => {
                         const claveDia = claveCambioTurno(asignacion.empleado, fechasPeriodo[indice]?.valor);
@@ -2575,7 +3094,7 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
             filaGrupoTurno.className = "fila-grupo-turno";
             const celdaGrupoTurno = document.createElement("th");
             celdaGrupoTurno.colSpan = fechasPeriodo.length + 1;
-            celdaGrupoTurno.textContent = grupoMostrado === "mañanas" ? "Mañanas" : "Tardes";
+            celdaGrupoTurno.textContent = { mañanas: "Mañanas", tardes: "Tardes", "sin-turno": "Sin turno asignado (pulsa una celda para asignar)" }[grupoMostrado];
             filaGrupoTurno.appendChild(celdaGrupoTurno);
             cuerpo.appendChild(filaGrupoTurno);
 
@@ -2589,11 +3108,10 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
                 celda.className = "celda-turno-editable";
                 celda.dataset.empleado = asignacion.empleado;
                 celda.dataset.fecha = fechasPeriodo[indiceFecha].valor;
-                celda.title = "Pulsa para cambiar este turno y ver sugerencias";
+                celda.title = "Pulsa para editar · arrastra para copiar (Alt: intercambiar) · clic derecho para borrar";
 
                 const claveDia = claveCambioTurno(asignacion.empleado, fechasPeriodo[indiceFecha].valor);
                 const detalleCambio = detallesCambiosManuales[claveDia];
-                const turnoOriginalDia = asignacion.turnosOriginales?.[indiceFecha];
                 const descripcionCambio = construirDescripcionCambioManual(detalleCambio);
 
                 if (clasificarTurno(turno) === grupoMostrado) {
@@ -2632,17 +3150,6 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
                         nota.textContent = descripcionCambio;
                         celda.appendChild(nota);
                     }
-                } else if (detalleCambio && turnoOriginalDia && clasificarTurno(turnoOriginalDia) === grupoMostrado) {
-                    celda.classList.add("celda-vacante-observada");
-                    celda.title = `Vacante por cambio de rol · ${descripcionCambio}`;
-                    const marcador = document.createElement("strong");
-                    marcador.className = "marcador-vacante";
-                    marcador.textContent = "Vacante";
-                    celda.appendChild(marcador);
-                    const nota = document.createElement("small");
-                    nota.className = "nota-cambio-manual";
-                    nota.textContent = descripcionCambio;
-                    celda.appendChild(nota);
                 } else {
                     celda.textContent = "-";
                     celda.classList.add("celda-sin-turno");
@@ -2682,6 +3189,278 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
     cuadrosTurnos.appendChild(bloque);
 }
 
+// ---- Modo manual: guardar, imprimir, descargar e informe ----
+const NO_TRABAJA = ["Descanso", "Libre", "Vacaciones"];
+
+function calcularInformeCuadro() {
+    const festivos = obtenerFestivos();
+    const filas = asignacionesActuales.map((asignacion) => {
+        const turnos = asignacion.turnos;
+        const fila = { empleado: asignacion.empleado, unidad: asignacion.unidad, jornada: asignacion.porcentaje,
+            horas: asignacion.horas, maximo: null, dias: 0, descansos: 0, vacaciones: 0, especiales: 0, mananas: 0, tardes: 0, cambios: 0 };
+        const regla = reglasGenerales.maxHorasAnuales;
+        if (regla.activa) fila.maximo = regla.valor * (asignacion.porcentaje / 100) * (fechasPeriodoActual.length / 365);
+        turnos.forEach((turno, i) => {
+            const fecha = fechasPeriodoActual[i];
+            if (turno === "Vacaciones") fila.vacaciones++;
+            else if (NO_TRABAJA.includes(turno)) fila.descansos++;
+            else {
+                fila.dias++;
+                if (esDiaEspecial(fecha, festivos)) fila.especiales++;
+                const grupo = clasificarTurno(turno);
+                if (grupo === "mañanas") fila.mananas++;
+                else if (grupo === "tardes") fila.tardes++;
+            }
+            if (cambiosTurnosManuales[claveCambioTurno(asignacion.empleado, fecha.valor)]) fila.cambios++;
+        });
+        return fila;
+    });
+    return filas;
+}
+
+let informeGenerado = false;
+
+function mostrarVistaCuadro(vista) {
+    const informe = vista === "informe";
+    document.getElementById("informeCuadro").hidden = !informe;
+    cuadrosTurnos.hidden = informe;
+    [["pestanaVistaCuadro", !informe], ["pestanaVistaInforme", informe]].forEach(([id, activa]) => {
+        const boton = document.getElementById(id);
+        boton.classList.toggle("activa", activa);
+        boton.setAttribute("aria-selected", String(activa));
+    });
+}
+
+function actualizarEstadoInforme() {
+    const hay = asignacionesActuales.length > 0;
+    document.getElementById("botonGenerarInforme").disabled = !hay;
+    document.getElementById("botonDescargarInforme").disabled = !hay || !informeGenerado;
+    document.getElementById("resultadoInforme").hidden = !informeGenerado || !hay;
+    document.getElementById("textoInformeVacio").hidden = informeGenerado && hay;
+}
+
+function renderizarInformeCuadro() {
+    const tabla = document.getElementById("tablaInforme");
+    if (!tabla) return;
+    if (!asignacionesActuales.length) {
+        informeGenerado = false;
+        actualizarEstadoInforme();
+        return;
+    }
+    informeGenerado = true;
+    const filas = calcularInformeCuadro();
+    const formato = (valor) => (Number.isFinite(valor) ? (Math.round(valor * 10) / 10).toLocaleString("es-ES") : "-");
+    const cabeceras = ["Empleado", "Unidad", "Jornada", "Horas trabajadas", "Máx. periodo", "Diferencia", "Días trabajados", "Descansos", "Vacaciones", "Fin de semana / festivo", "Mañanas", "Tardes", "Cambios manuales"];
+    tabla.innerHTML = "";
+    const cabecera = tabla.createTHead().insertRow();
+    cabeceras.forEach((texto) => cabecera.appendChild(Object.assign(document.createElement("th"), { textContent: texto })));
+    const cuerpo = tabla.createTBody();
+    filas.forEach((f) => {
+        const fila = cuerpo.insertRow();
+        const diferencia = f.maximo === null ? null : f.maximo - f.horas;
+        [f.empleado, f.unidad, `${f.jornada}%`, formato(f.horas), formato(f.maximo), formato(diferencia), f.dias, f.descansos, f.vacaciones, f.especiales, f.mananas, f.tardes, f.cambios]
+            .forEach((valor) => fila.insertCell().textContent = valor);
+        if (diferencia !== null && diferencia < 0) fila.classList.add("fila-excedida");
+    });
+    const total = filas.reduce((acc, f) => {
+        ["horas", "dias", "descansos", "vacaciones", "especiales", "mananas", "tardes", "cambios"].forEach((k) => { acc[k] += f[k]; });
+        return acc;
+    }, { horas: 0, dias: 0, descansos: 0, vacaciones: 0, especiales: 0, mananas: 0, tardes: 0, cambios: 0 });
+    const pie = tabla.createTFoot().insertRow();
+    ["Total", "", "", formato(total.horas), "", "", total.dias, total.descansos, total.vacaciones, total.especiales, total.mananas, total.tardes, total.cambios]
+        .forEach((valor) => pie.insertCell().textContent = valor);
+
+    const avisos = document.getElementById("avisosInforme");
+    avisos.innerHTML = "";
+    filas.filter((f) => f.maximo !== null && f.horas > f.maximo)
+        .forEach((f) => avisos.appendChild(Object.assign(document.createElement("li"), { textContent: `${f.empleado} supera el máximo de horas del periodo por ${formato(f.horas - f.maximo)} h.` })));
+    avisosCobertura.forEach((dias, clave) => avisos.appendChild(Object.assign(document.createElement("li"), { textContent: `Sin cubrir: ${clave} durante ${dias} día(s).` })));
+    actualizarEstadoInforme();
+}
+
+function descargarInformeCsv() {
+    if (!asignacionesActuales.length || !fechasPeriodoActual.length) return;
+    const filas = [["Empleado", "Unidad", "Jornada %", "Horas trabajadas", "Máx. periodo", "Días trabajados", "Descansos", "Vacaciones", "Fin de semana / festivo", "Mañanas", "Tardes", "Cambios manuales"]];
+    calcularInformeCuadro().forEach((f) => filas.push([f.empleado, f.unidad, f.jornada, f.horas, f.maximo === null ? "" : Math.round(f.maximo * 10) / 10, f.dias, f.descansos, f.vacaciones, f.especiales, f.mananas, f.tardes, f.cambios]));
+    const contenido = filas.map((fila) => fila.map((valor) => `"${String(valor ?? "").replace(/"/g, '""')}"`).join(";")).join("\n");
+    const enlace = document.createElement("a");
+    enlace.href = URL.createObjectURL(new Blob(["\ufeff", contenido], { type: "text/csv;charset=utf-8" }));
+    enlace.download = `informe-${fechasPeriodoActual[0].valor}-${fechasPeriodoActual.at(-1).valor}.csv`;
+    enlace.click();
+    URL.revokeObjectURL(enlace.href);
+}
+
+// Imprime siempre la vista del cuadro, sin el informe.
+function imprimirSoloCuadro() {
+    mostrarVistaCuadro("cuadro");
+    window.print();
+}
+
+document.getElementById("pestanaVistaCuadro")?.addEventListener("click", () => mostrarVistaCuadro("cuadro"));
+document.getElementById("pestanaVistaInforme")?.addEventListener("click", () => mostrarVistaCuadro("informe"));
+document.getElementById("botonGenerarInforme")?.addEventListener("click", renderizarInformeCuadro);
+document.getElementById("botonDescargarInforme")?.addEventListener("click", descargarInformeCsv);
+
+function cargarCuadrosGuardados() {
+    try {
+        const datos = JSON.parse(localStorage.getItem(STORAGE_CUADROS_GUARDADOS_KEY) || "[]");
+        return Array.isArray(datos) ? datos : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+let cuadrosGuardados = cargarCuadrosGuardados();
+
+function renderizarCuadrosGuardados() {
+    const selector = document.getElementById("cuadrosGuardados");
+    if (!selector) return;
+    selector.innerHTML = "";
+    if (!cuadrosGuardados.length) selector.appendChild(new Option("Sin cuadros guardados", ""));
+    cuadrosGuardados.forEach((cuadro) => selector.appendChild(new Option(cuadro.nombre, cuadro.id)));
+    document.getElementById("botonRecuperarCuadro").disabled = !cuadrosGuardados.length;
+    document.getElementById("botonEliminarCuadro").disabled = !cuadrosGuardados.length;
+}
+
+function guardarCuadroActual() {
+    if (!asignacionesActuales.length) return;
+    const campoNombre = document.getElementById("nombreCuadroGuardar");
+    const nombre = campoNombre.value.trim() || `Cuadrante ${fechasPeriodoActual[0].valor} a ${fechasPeriodoActual.at(-1).valor}`;
+    campoNombre.value = "";
+    const cuadro = {
+        id: String(Date.now()),
+        nombre: nombre.trim(),
+        inicio: fechasPeriodoActual[0].valor,
+        fin: fechasPeriodoActual.at(-1).valor,
+        unidad: unidadCuadro?.value || "todas",
+        turnos: Object.fromEntries(asignacionesActuales.map((asignacion) => [asignacion.empleado, asignacion.turnos]))
+    };
+    cuadrosGuardados.push(cuadro);
+    try {
+        localStorage.setItem(STORAGE_CUADROS_GUARDADOS_KEY, JSON.stringify(cuadrosGuardados));
+    } catch (error) {
+        cuadrosGuardados.pop();
+        alert("No se pudo guardar el cuadro: el almacenamiento del navegador está lleno.");
+        return;
+    }
+    renderizarCuadrosGuardados();
+    document.getElementById("cuadrosGuardados").value = cuadro.id;
+    alert(`Cuadro «${cuadro.nombre}» guardado`);
+}
+
+// Recupera un cuadro guardado: genera la base automática y registra como cambios manuales las diferencias.
+function recuperarCuadroGuardado() {
+    const cuadro = cuadrosGuardados.find((item) => item.id === document.getElementById("cuadrosGuardados").value);
+    if (!cuadro) return;
+    if (fechaInicioTurnos) fechaInicioTurnos.value = cuadro.inicio;
+    if (fechaFinTurnos) fechaFinTurnos.value = cuadro.fin;
+    if (unidadCuadro && [...unidadCuadro.options].some((o) => o.value === cuadro.unidad)) unidadCuadro.value = cuadro.unidad;
+    registrarHistorialCambios();
+    const fechas = obtenerFechasPeriodo(cuadro.inicio, cuadro.fin);
+    Object.keys(cuadro.turnos).forEach((empleado) => fechas.forEach((fecha) => {
+        delete cambiosTurnosManuales[claveCambioTurno(empleado, fecha.valor)];
+    }));
+    generarTurnos();
+    asignacionesActuales.forEach((asignacion) => {
+        const guardados = cuadro.turnos[asignacion.empleado];
+        if (!guardados) return;
+        guardados.forEach((turno, i) => {
+            if (turno !== asignacion.turnos[i] && fechasPeriodoActual[i]) {
+                cambiosTurnosManuales[claveCambioTurno(asignacion.empleado, fechasPeriodoActual[i].valor)] = turno;
+            }
+        });
+    });
+    guardarCambiosManuales();
+    generarTurnos();
+}
+
+// Deja todas las celdas del cuadro en "Libre" para asignar los turnos a mano (las vacaciones se respetan).
+function limpiarCuadro() {
+    if (!asignacionesActuales.length) generarTurnos();
+    if (!asignacionesActuales.length || !fechasPeriodoActual.length) return;
+    if (!confirm("¿Limpiar el cuadro? Todas las celdas quedarán libres para asignarlas manualmente (se puede deshacer).")) return;
+    registrarHistorialCambios();
+    asignacionesActuales.forEach((asignacion) => {
+        fechasPeriodoActual.forEach((fecha, indice) => {
+            if (asignacion.turnos[indice] === "Vacaciones") return;
+            const clave = claveCambioTurno(asignacion.empleado, fecha.valor);
+            cambiosTurnosManuales[clave] = "Libre";
+            delete horariosManualesTurnos[clave];
+            delete detallesCambiosManuales[clave];
+        });
+    });
+    guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
+    generarTurnos();
+}
+
+function eliminarCuadroGuardado() {
+    const id = document.getElementById("cuadrosGuardados").value;
+    const cuadro = cuadrosGuardados.find((item) => item.id === id);
+    if (!cuadro || !confirm(`¿Eliminar el cuadro «${cuadro.nombre}»?`)) return;
+    cuadrosGuardados = cuadrosGuardados.filter((item) => item.id !== id);
+    localStorage.setItem(STORAGE_CUADROS_GUARDADOS_KEY, JSON.stringify(cuadrosGuardados));
+    renderizarCuadrosGuardados();
+}
+
+function aplicarModoManual(activo) {
+    localStorage.setItem(STORAGE_MODO_MANUAL_KEY, activo ? "1" : "0");
+    const boton = document.getElementById("botonModoManual");
+    boton.textContent = `Modo manual: ${activo ? "activado" : "desactivado"}`;
+    boton.setAttribute("aria-pressed", String(activo));
+    boton.classList.toggle("boton-activo", activo);
+    document.getElementById("panelManual").hidden = !activo;
+    [botonGenerar, botonGenerarPeriodo, botonActualizarCuadro].forEach((item) => { if (item) item.hidden = activo; });
+}
+
+function actualizarBotonesModoManual() {
+    const hayCuadro = asignacionesActuales.length > 0;
+    ["botonGuardarCuadro", "botonImprimirManual", "botonDescargarManual"].forEach((id) => {
+        const boton = document.getElementById(id);
+        if (boton) boton.disabled = !hayCuadro;
+    });
+}
+
+document.getElementById("botonModoManual")?.addEventListener("click", () => {
+    const activar = document.getElementById("panelManual").hidden;
+    aplicarModoManual(activar);
+    // Al entrar en modo manual se parte de un cuadro generado si todavía no hay ninguno.
+    if (activar && !asignacionesActuales.length && empleados.length) generarTurnos();
+});
+// Vuelve a la propuesta automática del periodo descartando los cambios manuales de ese periodo.
+function cargarCuadroBase() {
+    const inicio = fechaInicioTurnos?.value || obtenerFechaInicioSemana();
+    const fin = fechaFinTurnos?.value || obtenerFechaFinSemana();
+    if (fin >= inicio) {
+        const fechas = obtenerFechasPeriodo(inicio, fin);
+        const claves = empleados.flatMap((empleado) => fechas.map((fecha) => claveCambioTurno(empleado, fecha.valor)))
+            .filter((clave) => cambiosTurnosManuales[clave] !== undefined);
+        if (claves.length) {
+            if (!confirm("Se cargará la propuesta automática y se descartarán los cambios manuales del periodo (se puede deshacer). ¿Continuar?")) return;
+            registrarHistorialCambios();
+            claves.forEach((clave) => {
+                delete cambiosTurnosManuales[clave];
+                delete horariosManualesTurnos[clave];
+                delete detallesCambiosManuales[clave];
+            });
+            guardarCambiosManuales();
+            guardarHorariosManuales();
+            guardarDetallesCambiosManuales();
+        }
+    }
+    generarTurnos();
+}
+document.getElementById("botonCuadroBase")?.addEventListener("click", cargarCuadroBase);
+document.getElementById("botonLimpiarCuadro")?.addEventListener("click", limpiarCuadro);
+document.getElementById("botonGuardarCuadro")?.addEventListener("click", guardarCuadroActual);
+document.getElementById("botonImprimirManual")?.addEventListener("click", imprimirSoloCuadro);
+document.getElementById("botonDescargarManual")?.addEventListener("click", descargarCuadroCsv);
+document.getElementById("botonRecuperarCuadro")?.addEventListener("click", recuperarCuadroGuardado);
+document.getElementById("botonEliminarCuadro")?.addEventListener("click", eliminarCuadroGuardado);
+renderizarCuadrosGuardados();
+aplicarModoManual(localStorage.getItem(STORAGE_MODO_MANUAL_KEY) === "1");
+
 function actualizarResumenCuadro(asignaciones, fechasPeriodo, filtroUnidad) {
     const unidades = new Set(asignaciones.map((asignacion) => asignacion.unidad));
     const cambiosEnPeriodo = asignaciones.reduce((total, asignacion) => {
@@ -2708,6 +3487,8 @@ function actualizarResumenCuadro(asignaciones, fechasPeriodo, filtroUnidad) {
     if (botonImprimirCuadro) botonImprimirCuadro.disabled = false;
     if (botonDescargarCuadro) botonDescargarCuadro.disabled = false;
     if (botonImagenCuadro) botonImagenCuadro.disabled = false;
+    if (informeGenerado) renderizarInformeCuadro(); else actualizarEstadoInforme();
+    actualizarBotonesModoManual();
     if (metricaEmpleados) metricaEmpleados.textContent = asignaciones.length;
     if (metricaUnidades) metricaUnidades.textContent = unidades.size;
     if (metricaDias) metricaDias.textContent = fechasPeriodo.length;
@@ -2770,7 +3551,7 @@ function iniciarArrastreCuadro(event) {
     if (celdaOrigen?.draggable) {
         arrastreTurno = { empleado: celdaOrigen.dataset.empleado, fecha: celdaOrigen.dataset.fecha };
         celdaOrigen.classList.add("celda-arrastrada");
-        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.effectAllowed = "copyMove";
         event.dataTransfer.setData("text/plain", "turno");
         return;
     }
@@ -2786,7 +3567,7 @@ function permitirSoltarCuadro(event) {
         const celda = event.target.closest(".celda-turno-editable");
         if (!celda) return;
         event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
+        event.dataTransfer.dropEffect = event.altKey ? "move" : "copy";
         cuadrosTurnos.querySelectorAll(".celda-destino").forEach((item) => item.classList.remove("celda-destino"));
         celda.classList.add("celda-destino");
         return;
@@ -2823,9 +3604,28 @@ function intercambiarTurnos(origen, destino) {
     }
 
     registrarHistorialCambios();
-    cambiosTurnosManuales[claveCambioTurno(origen.empleado, origen.fecha)] = turnoB;
-    cambiosTurnosManuales[claveCambioTurno(destino.empleado, destino.fecha)] = turnoA;
+    const unidadDia = (asignacion, indice) => asignacion.unidadesPorDia?.[indice] || asignacion.unidad;
+    const unidadA = unidadDia(asignacionA, indiceA);
+    const unidadB = unidadDia(asignacionB, indiceB);
+    // Cada celda recibe el turno y la unidad de la otra; sus horarios manuales anteriores dejan de aplicar.
+    [[origen, asignacionA, turnoA, turnoB, unidadA, unidadB], [destino, asignacionB, turnoB, turnoA, unidadB, unidadA]]
+        .forEach(([celda, asignacion, anterior, nuevo, unidadAnterior, unidadNueva]) => {
+            const clave = claveCambioTurno(celda.empleado, celda.fecha);
+            cambiosTurnosManuales[clave] = nuevo;
+            delete horariosManualesTurnos[clave];
+            detallesCambiosManuales[clave] = {
+                turnoAnterior: anterior,
+                unidadAnterior,
+                turnoNuevo: nuevo,
+                unidadNueva: ["Descanso", "Libre"].includes(nuevo) ? asignacion.unidad : unidadNueva,
+                observacion: "Movido arrastrando en el cuadrante",
+                ordenadoPor: "",
+                registradoEl: new Date().toISOString()
+            };
+        });
     guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
 
     const posiciones = new Map();
     cuadrosTurnos.querySelectorAll(".bloque-turnos").forEach((bloque) => {
@@ -2837,13 +3637,96 @@ function intercambiarTurnos(origen, destino) {
     });
 }
 
+function aplicarCambioCelda(empleado, fecha, turno, unidad, observacion) {
+    const asignacion = asignacionesActuales.find((item) => item.empleado === empleado);
+    const indice = fechasPeriodoActual.findIndex((item) => item.valor === fecha);
+    if (!asignacion || indice < 0) return;
+    const clave = claveCambioTurno(empleado, fecha);
+    detallesCambiosManuales[clave] = {
+        turnoAnterior: asignacion.turnos[indice],
+        unidadAnterior: asignacion.unidadesPorDia?.[indice] || asignacion.unidad,
+        turnoNuevo: turno,
+        unidadNueva: ["Descanso", "Libre"].includes(turno) ? asignacion.unidad : unidad,
+        observacion,
+        ordenadoPor: "",
+        registradoEl: new Date().toISOString()
+    };
+    cambiosTurnosManuales[clave] = turno;
+    delete horariosManualesTurnos[clave];
+}
+
+function guardarYRegenerarManual() {
+    guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
+    const posiciones = new Map();
+    cuadrosTurnos.querySelectorAll(".bloque-turnos").forEach((bloque) => {
+        posiciones.set(bloque.dataset.grupoTurnos, bloque.querySelector(".ventana-carrusel")?.scrollLeft || 0);
+    });
+    generarTurnos();
+    cuadrosTurnos.querySelectorAll(".bloque-turnos").forEach((bloque) => {
+        bloque.querySelector(".ventana-carrusel")?.scrollTo({ left: posiciones.get(bloque.dataset.grupoTurnos) || 0, behavior: "instant" });
+    });
+}
+
+// Copia el turno (y la unidad del día) de la celda origen a la de destino; el origen se mantiene.
+function copiarTurno(origen, destino) {
+    const asignacionA = asignacionesActuales.find((item) => item.empleado === origen.empleado);
+    const asignacionB = asignacionesActuales.find((item) => item.empleado === destino.empleado);
+    const indiceA = fechasPeriodoActual.findIndex((fecha) => fecha.valor === origen.fecha);
+    const indiceB = fechasPeriodoActual.findIndex((fecha) => fecha.valor === destino.fecha);
+    if (!asignacionA || !asignacionB || indiceA < 0 || indiceB < 0) return;
+    if (origen.empleado === destino.empleado && origen.fecha === destino.fecha) return;
+
+    const turno = asignacionA.turnos[indiceA];
+    if (turno === asignacionB.turnos[indiceB]) return;
+    if (reglasGenerales.vacacionesImpidenTurno.activa && asignacionB.turnos[indiceB] === "Vacaciones") {
+        alert("No se puede sobrescribir un día de vacaciones. Puedes desactivar la regla en Configuración de reglas.");
+        return;
+    }
+    const unidad = asignacionA.unidadesPorDia?.[indiceA] || asignacionA.unidad;
+    if (reglasGenerales.respetarPuesto.activa &&
+        !turnoPermitidoParaEmpleado(unidad, asignacionB.regla, turno, asignacionB.turnos[indiceB])) {
+        alert("La copia no es posible: el turno no corresponde al puesto/cualificación del empleado de destino.");
+        return;
+    }
+    const ocupante = obtenerOcupanteRolUnidad(unidad, turno, indiceB, [destino.empleado]);
+    if (ocupante && !confirm(`${ocupante} ya tiene ${turno} en ${unidad} ese día. ¿Copiarlo igualmente a ${destino.empleado}?`)) return;
+
+    registrarHistorialCambios();
+    aplicarCambioCelda(destino.empleado, destino.fecha, turno, unidad, "Copiado arrastrando en el cuadrante");
+    guardarYRegenerarManual();
+}
+
+// Borra el turno de una celda dejándola libre sin tocar al resto.
+function borrarTurnoCelda(empleado, fecha) {
+    const asignacion = asignacionesActuales.find((item) => item.empleado === empleado);
+    const indice = fechasPeriodoActual.findIndex((item) => item.valor === fecha);
+    if (!asignacion || indice < 0) return;
+    const actual = asignacion.turnos[indice];
+    if (["Libre", "Descanso"].includes(actual)) return;
+    if (reglasGenerales.vacacionesImpidenTurno.activa && actual === "Vacaciones") {
+        alert("No se puede borrar un día de vacaciones. Puedes desactivar la regla en Configuración de reglas.");
+        return;
+    }
+    registrarHistorialCambios();
+    aplicarCambioCelda(empleado, fecha, "Libre", asignacion.unidad, "Turno borrado");
+    delete detallesCambiosManuales[claveCambioTurno(empleado, fecha)];
+    guardarYRegenerarManual();
+}
+
 function soltarCuadro(event) {
     event.preventDefault();
     if (arrastreTurno) {
         const origen = arrastreTurno;
         const celda = event.target.closest(".celda-turno-editable");
         arrastreTurno = null;
-        if (celda) intercambiarTurnos(origen, { empleado: celda.dataset.empleado, fecha: celda.dataset.fecha });
+        if (celda) {
+            const destino = { empleado: celda.dataset.empleado, fecha: celda.dataset.fecha };
+            // Por defecto se copia; con Alt se intercambian las dos celdas.
+            if (event.altKey) intercambiarTurnos(origen, destino);
+            else copiarTurno(origen, destino);
+        }
         limpiarEstadoArrastreCuadros();
         return;
     }
@@ -2909,11 +3792,12 @@ function abrirEditorCambioTurno(empleado, fecha) {
 
     if (unidadCambioTurno) {
         unidadCambioTurno.innerHTML = "";
+        const unidadDelDia = asignacion.unidadesPorDia?.[indiceFecha] || asignacion.unidad;
         obtenerUnidadesTrabajoDisponibles(asignacion.unidad).forEach((unidad) => {
             const opcion = document.createElement("option");
             opcion.value = unidad;
             opcion.textContent = unidad;
-            opcion.selected = unidadesSonIguales(unidad, asignacion.unidad);
+            opcion.selected = unidadesSonIguales(unidad, unidadDelDia);
             unidadCambioTurno.appendChild(opcion);
         });
     }
@@ -2994,11 +3878,17 @@ function renderizarSugerenciasCobertura(empleadoObjetivo, fecha, indiceFecha, tu
 }
 
 function obtenerIntervaloTurno(turno, regla, dia) {
-    const datos = obtenerCatalogoTurnosEmpleado(regla).find((item) => item.codigo === turno);
-    const m = datos?.horario?.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
-    if (!m) return null;
-    const inicio = dia * 1440 + Number(m[1]) * 60 + Number(m[2]);
-    let fin = dia * 1440 + Number(m[3]) * 60 + Number(m[4]);
+    const entrada = (obtenerCatalogoTurnosEmpleado(regla), cacheGeneracion?.catalogos.get(regla || SIN_REGLA));
+    let horas = entrada?.intervalos.get(turno);
+    if (horas === undefined) {
+        const datos = obtenerCatalogoTurnosEmpleado(regla).find((item) => item.codigo === turno);
+        const m = datos?.horario?.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+        horas = m ? [Number(m[1]) * 60 + Number(m[2]), Number(m[3]) * 60 + Number(m[4])] : null;
+        entrada?.intervalos.set(turno, horas);
+    }
+    if (!horas) return null;
+    const inicio = dia * 1440 + horas[0];
+    let fin = dia * 1440 + horas[1];
     if (fin <= inicio) fin += 1440;
     return { inicio, fin };
 }
@@ -3011,8 +3901,34 @@ function calcularHorasTurnos(turnos, regla) {
     return minutos / 60;
 }
 
-function aplicarReglasDescanso(turnos, regla, limiteHoras, fechasPeriodo, porcentaje) {
+function obtenerIniciosSemanasCompletas(fechasPeriodo) {
+    return fechasPeriodo
+        .map((fecha, indice) => ({ fecha, indice }))
+        .filter(({ fecha, indice }) =>
+            obtenerDiaSemanaFecha(fecha.valor) === 1 && indice + 7 <= fechasPeriodo.length
+        )
+        .map(({ indice }) => indice);
+}
+
+function ordenarIndicesParaDescanso(indices, fechasPeriodo, indiceRotacion) {
+    // Prioriza mover el descanso a días laborables y rota la elección entre empleados.
+    const entreSemana = [];
+    const finDeSemana = [];
+    indices.forEach((indice) => {
+        const dia = obtenerDiaSemanaFecha(fechasPeriodo[indice].valor);
+        (dia === 0 || dia === 6 ? finDeSemana : entreSemana).push(indice);
+    });
+    const rotar = (lista) => {
+        if (!lista.length) return lista;
+        const desplazamiento = Math.abs(indiceRotacion) % lista.length;
+        return lista.map((_, indice) => lista[(indice + desplazamiento) % lista.length]);
+    };
+    return [...rotar(entreSemana), ...rotar(finDeSemana)];
+}
+
+function aplicarReglasDescanso(turnos, regla, limiteHoras, fechasPeriodo, porcentaje, indiceRotacion = 0) {
     const { descansoEntreTurnos, descansoSemanal, maxHorasAnuales, maxHorasSemanales, maxHorasMensuales } = reglasGenerales;
+    const iniciosSemanas = obtenerIniciosSemanasCompletas(fechasPeriodo);
 
     if (descansoEntreTurnos.activa) {
         const minimo = descansoEntreTurnos.valor * 60;
@@ -3030,7 +3946,7 @@ function aplicarReglasDescanso(turnos, regla, limiteHoras, fechasPeriodo, porcen
 
     if (descansoSemanal.activa) {
         const minimo = descansoSemanal.valor * 60;
-        for (let inicio = 0; inicio + 7 <= turnos.length; inicio += 7) {
+        iniciosSemanas.forEach((inicio, indiceSemana) => {
             for (let intento = 0; intento < 7; intento++) {
                 let cursor = inicio * 1440;
                 let mejorDescanso = 0;
@@ -3043,14 +3959,13 @@ function aplicarReglasDescanso(turnos, regla, limiteHoras, fechasPeriodo, porcen
                 mejorDescanso = Math.max(mejorDescanso, (inicio + 7) * 1440 - cursor);
                 if (mejorDescanso >= minimo) break;
 
-                let candidato = -1;
-                for (let dia = inicio + 6; dia >= inicio; dia--) {
-                    if (obtenerIntervaloTurno(turnos[dia], regla, dia)) { candidato = dia; break; }
-                }
-                if (candidato < 0) break;
+                const diasSemana = Array.from({ length: 7 }, (_, indice) => inicio + indice);
+                const candidato = ordenarIndicesParaDescanso(diasSemana, fechasPeriodo, indiceRotacion + indiceSemana)
+                    .find((dia) => obtenerIntervaloTurno(turnos[dia], regla, dia));
+                if (candidato === undefined) break;
                 turnos[candidato] = "Descanso";
             }
-        }
+        });
     }
 
     const horasEnDias = (indices) => indices.reduce((total, dia) => {
@@ -3060,21 +3975,25 @@ function aplicarReglasDescanso(turnos, regla, limiteHoras, fechasPeriodo, porcen
     // Quita un día trabajado por bloque de 7 días, de forma rotatoria, hasta cumplir el límite.
     const recortarHoras = (indices, limite) => {
         for (let ronda = 0; horasEnDias(indices) > limite && ronda < indices.length; ronda++) {
+            let huboCambio = false;
             for (let inicio = 0; inicio < indices.length; inicio += 7) {
                 if (horasEnDias(indices) <= limite) break;
                 const bloque = indices.slice(inicio, inicio + 7);
-                for (let k = bloque.length - 1 - ronda; k >= 0; k--) {
-                    if (obtenerIntervaloTurno(turnos[bloque[k]], regla, bloque[k])) { turnos[bloque[k]] = "Descanso"; break; }
-                }
+                const candidato = ordenarIndicesParaDescanso(bloque, fechasPeriodo, indiceRotacion + ronda + inicio / 7)
+                    .find((dia) => obtenerIntervaloTurno(turnos[dia], regla, dia));
+                if (candidato === undefined) continue;
+                turnos[candidato] = "Descanso";
+                huboCambio = true;
             }
+            if (!huboCambio) break;
         }
     };
     const proporcion = (porcentaje ?? 100) / 100;
 
     if (maxHorasSemanales.activa) {
-        for (let inicio = 0; inicio + 7 <= turnos.length; inicio += 7) {
+        iniciosSemanas.forEach((inicio) => {
             recortarHoras(Array.from({ length: 7 }, (_, k) => inicio + k), maxHorasSemanales.valor * proporcion);
-        }
+        });
     }
 
     if (maxHorasMensuales.activa && fechasPeriodo) {
@@ -3107,12 +4026,24 @@ function obtenerHoraSalida(turno) {
     return datos.horario.split("-")[1].trim();
 }
 
+// Devuelve quién ocupa ya el rol (único por unidad y día) en la unidad indicada, si lo hay.
+function obtenerOcupanteRolUnidad(unidad, turno, indiceDia, excluidos = []) {
+    const turnosUnidad = obtenerConfiguracionUnidad(unidad)?.turnos || [];
+    if (!turnosUnidad.includes(turno) || !["mañanas", "tardes"].includes(clasificarTurno(turno))) return null;
+    const ocupante = asignacionesActuales.find((item) =>
+        !excluidos.includes(item.empleado) &&
+        item.turnos[indiceDia] === turno &&
+        unidadesSonIguales(item.unidadesPorDia?.[indiceDia] || item.unidad, unidad)
+    );
+    return ocupante?.empleado || null;
+}
+
 function guardarCambioTurnoIndividual() {
     if (!cambioTurnoActivo || !nuevoTurnoIndividual) return;
     const { empleado, fecha, indiceFecha } = cambioTurnoActivo;
     const asignacion = asignacionesActuales.find((item) => item.empleado === empleado);
     const turnoAnterior = asignacion?.turnos[indiceFecha] || "";
-    const unidadAnterior = asignacion?.unidad || "";
+    const unidadAnterior = asignacion?.unidadesPorDia?.[indiceFecha] || asignacion?.unidad || "";
 
     const unidadSeleccionada = unidadCambioTurno?.value.trim();
     if (reglasGenerales.respetarPuesto.activa && asignacion) {
@@ -3122,6 +4053,10 @@ function guardarCambioTurnoIndividual() {
             return;
         }
     }
+
+    const unidadFinal = unidadSeleccionada || asignacion?.unidadesPorDia?.[indiceFecha] || asignacion?.unidad;
+    const ocupante = obtenerOcupanteRolUnidad(unidadFinal, nuevoTurnoIndividual.value, indiceFecha, [empleado]);
+    if (ocupante && !confirm(`${ocupante} ya tiene ${nuevoTurnoIndividual.value} en ${unidadFinal} ese día. ¿Asignarlo igualmente a ${empleado}?`)) return;
 
     registrarHistorialCambios();
     cambiosTurnosManuales[claveCambioTurno(empleado, fecha)] = nuevoTurnoIndividual.value;
@@ -3137,17 +4072,10 @@ function guardarCambioTurnoIndividual() {
     }
     guardarHorariosManuales();
 
-    if (unidadSeleccionada && asignacion && !unidadesSonIguales(unidadSeleccionada, asignacion.unidad)) {
-        reglasPorEmpleado[empleado] = {
-            ...reglasPorEmpleado[empleado],
-            rotacionUnidades: unidadSeleccionada
-        };
-        guardarReglas();
-    }
-
     const claveDetalle = claveCambioTurno(empleado, fecha);
     const observacion = observacionCambioTurno?.value.trim() || "";
     const ordenadoPor = ordenadoPorCambioTurno?.value.trim() || "";
+    // La unidad elegida vale solo para este día; la unidad base del empleado no cambia.
     const unidadNueva = unidadSeleccionada || unidadAnterior;
     const huboCambio = nuevoTurnoIndividual.value !== turnoAnterior || !unidadesSonIguales(unidadNueva, unidadAnterior);
     if (observacion || ordenadoPor || huboCambio) {
@@ -3208,12 +4136,23 @@ function ordenarCodigosTurno(codigoA, codigoB) {
 }
 
 function obtenerCatalogoTurnosEmpleado(regla) {
+    const cache = cacheGeneracion?.catalogos;
+    const clave = regla || SIN_REGLA;
+    const guardado = cache?.get(clave);
+    if (guardado) return guardado.lista;
+
     const personalizados = Array.isArray(regla?.reglasPersonalizadas) ? regla.reglasPersonalizadas : [];
-    const catalogo = [...catalogoTurnos, ...rolesPersonalizadosGuardados, ...personalizados];
-    return catalogo.filter((turno, indice, lista) => {
-        return lista.findIndex((item) => item.codigo === turno.codigo) === indice;
+    const vistos = new Set();
+    const lista = [...catalogoTurnos, ...rolesPersonalizadosGuardados, ...personalizados].filter((turno) => {
+        if (vistos.has(turno.codigo)) return false;
+        vistos.add(turno.codigo);
+        return true;
     });
+    cache?.set(clave, { lista, intervalos: new Map() });
+    return lista;
 }
+
+const SIN_REGLA = {};
 
 function normalizarTurnosParaUnidad(unidad, turnos) {
     const grupos = obtenerGruposTurnosUnidad(unidad, {
@@ -3236,6 +4175,7 @@ function normalizarTurnosParaUnidad(unidad, turnos) {
 function turnoPermitidoParaEmpleado(unidad, regla, turno, turnoActual = "") {
     if (["Descanso", "Libre", "Vacaciones"].includes(turno) || turno === turnoActual) return true;
     if (obtenerTurnosResponsabilidad(unidad, regla).includes(turno)) return true;
+    if (diasPorRol.some((item) => item.codigo === turno && reglasPorEmpleado[item.empleado] === regla)) return true;
     // Los empleados de la unidad pueden cubrir cualquier turno configurado en ella.
     const grupos = obtenerGruposTurnosUnidad(unidad, regla);
     return Boolean(grupos && [...grupos.manana, ...grupos.tarde].includes(turno));
