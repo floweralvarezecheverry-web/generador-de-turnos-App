@@ -59,6 +59,7 @@ let fechasPeriodoActual = [];
 let cambioTurnoActivo = null;
 let arrastreTurno = null;
 let avisosCobertura = new Map();
+let semillasContinuidad = null;
 const historialCambios = [];
 const botonDeshacerCambio = document.getElementById("botonDeshacerCambio");
 
@@ -573,16 +574,6 @@ function cargarDetallesCambiosManuales() {
 
 function guardarDetallesCambiosManuales() {
     localStorage.setItem(STORAGE_DETALLES_CAMBIOS_KEY, JSON.stringify(detallesCambiosManuales));
-}
-
-function construirDescripcionCambioManual(detalle) {
-    if (!detalle) return "";
-    const partes = [];
-    if (detalle.turnoAnterior) partes.push(`Turno anterior: ${detalle.turnoAnterior}`);
-    if (detalle.unidadAnterior) partes.push(`Unidad anterior: ${detalle.unidadAnterior}`);
-    if (detalle.observacion) partes.push(`Motivo: ${detalle.observacion}`);
-    if (detalle.ordenadoPor) partes.push(`Ordenado por: ${detalle.ordenadoPor}`);
-    return partes.join(" · ");
 }
 
 function cargarOrdenCuadros() {
@@ -2661,6 +2652,7 @@ function generarTurnos() {
     fechasPeriodoActual = fechasPeriodo;
     cuadrosTurnos.innerHTML = "";
     const asignaciones = ejecutarConCacheGeneracion(() => construirAsignaciones(empleadosActivos, fechasPeriodo));
+    semillasContinuidad = null;
 
     asignacionesActuales = asignaciones;
     prepararTurnosIndividuales();
@@ -2707,7 +2699,9 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                 const fechaDia = fechasPeriodo[indiceDia].valor;
                 const estaDeVacaciones = regla.vacacionesInicio && regla.vacacionesFin &&
                     fechaDia >= regla.vacacionesInicio && fechaDia <= regla.vacacionesFin;
-                let turno = obtenerTurnoResponsabilidad(unidadEmpleado, regla, fechasPeriodo[indiceDia].valor, indiceDia, indiceEmpleado);
+                let turno = semillasContinuidad?.[empleado] !== undefined && turnosProgramables.length
+                    ? turnosProgramables[(semillasContinuidad[empleado] + indiceDia) % turnosProgramables.length]
+                    : obtenerTurnoResponsabilidad(unidadEmpleado, regla, fechasPeriodo[indiceDia].valor, indiceDia, indiceEmpleado);
                 if (!turno) {
                     turno = turnosProgramables.length
                         ? turnosProgramables[indiceDia % turnosProgramables.length]
@@ -2766,7 +2760,8 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                 const claveManual = claveCambioTurno(empleado, fechasPeriodo[indiceDia].valor);
                 const cambioManual = cambiosTurnosManuales[claveManual];
                 const vacacionesProtegidas = reglasGenerales.vacacionesImpidenTurno.activa && turnoOriginal === "Vacaciones";
-                if (cambioManual && !vacacionesProtegidas) {
+                const esCopiaContinuidad = detallesCambiosManuales[claveManual]?.origen === "continuidad-semanal";
+                if (cambioManual && (!vacacionesProtegidas || esCopiaContinuidad)) {
                     // El cambio manual solo afecta a esta celda: libera el puesto automático y fija
                     // la unidad del día sin tocar la unidad base ni a los demás empleados.
                     const unidadManual = detallesCambiosManuales[claveManual]?.unidadNueva;
@@ -3100,6 +3095,7 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
 
             empleadosTurno.forEach((asignacion) => {
             const fila = document.createElement("tr");
+            fila.className = "fila-empleado-cuadrante";
             const empleado = document.createElement("td");
             empleado.textContent = asignacion.empleado;
             fila.appendChild(empleado);
@@ -3112,7 +3108,6 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
 
                 const claveDia = claveCambioTurno(asignacion.empleado, fechasPeriodo[indiceFecha].valor);
                 const detalleCambio = detallesCambiosManuales[claveDia];
-                const descripcionCambio = construirDescripcionCambioManual(detalleCambio);
 
                 if (clasificarTurno(turno) === grupoMostrado) {
                     const datos = obtenerDatosTurno(turno, asignacion.unidad, asignacion.regla);
@@ -3126,13 +3121,11 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
                         const horarioManual = horariosManualesTurnos[claveDia];
                         horario.textContent = horarioManual || datos.horario;
                         celda.append(codigo, horario);
-                        const unidadPrestada = asignacion.unidadesPorDia?.[indiceFecha];
-                        if (unidadPrestada) {
-                            const apoyo = document.createElement("small");
-                            apoyo.className = "jornada-parcial-cuadrante";
-                            apoyo.textContent = `Apoyo: ${unidadPrestada}`;
-                            celda.appendChild(apoyo);
-                        }
+                        const unidadDelDia = asignacion.unidadesPorDia?.[indiceFecha] || asignacion.unidad;
+                        const referenciaUnidad = document.createElement("small");
+                        referenciaUnidad.className = "unidad-turno-cuadrante";
+                        referenciaUnidad.textContent = unidadDelDia;
+                        celda.appendChild(referenciaUnidad);
                         if (asignacion.porcentaje < 100) {
                             const parcial = document.createElement("small");
                             parcial.className = "jornada-parcial-cuadrante";
@@ -3144,11 +3137,6 @@ function renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo) {
                     }
                     if (detalleCambio) {
                         celda.classList.add("celda-turno-modificado");
-                        celda.title = `${celda.title} · ${descripcionCambio}`;
-                        const nota = document.createElement("small");
-                        nota.className = "nota-cambio-manual";
-                        nota.textContent = descripcionCambio;
-                        celda.appendChild(nota);
                     }
                 } else {
                     celda.textContent = "-";
@@ -3320,6 +3308,162 @@ function renderizarCuadrosGuardados() {
     cuadrosGuardados.forEach((cuadro) => selector.appendChild(new Option(cuadro.nombre, cuadro.id)));
     document.getElementById("botonRecuperarCuadro").disabled = !cuadrosGuardados.length;
     document.getElementById("botonEliminarCuadro").disabled = !cuadrosGuardados.length;
+    actualizarBotonContinuidadSemanal();
+}
+
+function formatearFechaLocal(fecha) {
+    const anio = fecha.getFullYear();
+    const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+    const dia = String(fecha.getDate()).padStart(2, "0");
+    return `${anio}-${mes}-${dia}`;
+}
+
+function sumarDiasAFecha(fechaValor, dias) {
+    const fecha = new Date(`${fechaValor}T00:00:00`);
+    fecha.setDate(fecha.getDate() + dias);
+    return formatearFechaLocal(fecha);
+}
+
+function diferenciaDiasEntreFechas(inicio, fin) {
+    return Math.round((new Date(`${fin}T00:00:00`) - new Date(`${inicio}T00:00:00`)) / 86400000);
+}
+
+function esCuadroSemanalCompleto(cuadro) {
+    if (!cuadro?.inicio || !cuadro?.fin || !cuadro?.turnos || typeof cuadro.turnos !== "object") return false;
+    const dias = diferenciaDiasEntreFechas(cuadro.inicio, cuadro.fin) + 1;
+    const inicioSemana = new Date(`${cuadro.inicio}T00:00:00`).getDay();
+    const finSemana = new Date(`${cuadro.fin}T00:00:00`).getDay();
+    return dias === 7 && inicioSemana === 1 && finSemana === 0;
+}
+
+function obtenerCuadrosParaContinuidadSemanal() {
+    const semanales = cuadrosGuardados
+        .filter(esCuadroSemanalCompleto)
+        .sort((cuadroA, cuadroB) => cuadroA.inicio.localeCompare(cuadroB.inicio));
+    if (semanales.length < 2) return null;
+
+    const anterior = semanales.at(-2);
+    const reciente = semanales.at(-1);
+    return diferenciaDiasEntreFechas(anterior.inicio, reciente.inicio) === 7 ? [anterior, reciente] : null;
+}
+
+function construirSecuenciasContinuas(cuadroA, cuadroB) {
+    const empleadosConSecuencia = new Set([
+        ...Object.keys(cuadroA.turnos),
+        ...Object.keys(cuadroB.turnos)
+    ]);
+    const secuencias = new Map();
+
+    empleadosConSecuencia.forEach((empleado) => {
+        const semanaA = cuadroA.turnos[empleado];
+        const semanaB = cuadroB.turnos[empleado];
+        if (!Array.isArray(semanaA) || !Array.isArray(semanaB) || semanaA.length !== 7 || semanaB.length !== 7) return;
+        secuencias.set(empleado, [...semanaA, ...semanaB]);
+    });
+    return secuencias;
+}
+
+function obtenerDatoSecuenciaSemanal(cuadroA, cuadroB, campo, empleado, indice) {
+    const cuadro = indice < 7 ? cuadroA : cuadroB;
+    const valores = cuadro[campo]?.[empleado];
+    return Array.isArray(valores) ? valores[indice % 7] : "";
+}
+
+function crearBotonContinuidadSemanal() {
+    const barraManual = document.querySelector("#panelManual .barra-manual");
+    if (!barraManual || document.getElementById("botonContinuidadSemanal")) return;
+
+    const boton = document.createElement("button");
+    boton.id = "botonContinuidadSemanal";
+    boton.type = "button";
+    boton.className = "boton boton-primario";
+    boton.textContent = "Continuidad desde 2 cuadros";
+    boton.title = "Repite la secuencia de dos cuadros semanales guardados";
+    boton.addEventListener("click", generarContinuidadSemanalDesdeCuadros);
+    barraManual.insertBefore(boton, document.getElementById("botonGuardarCuadro"));
+}
+
+function actualizarBotonContinuidadSemanal() {
+    const boton = document.getElementById("botonContinuidadSemanal");
+    if (!boton) return;
+    boton.disabled = !obtenerCuadrosParaContinuidadSemanal();
+}
+
+function generarContinuidadSemanalDesdeCuadros() {
+    const cuadrosOrigen = obtenerCuadrosParaContinuidadSemanal();
+    if (!cuadrosOrigen) {
+        alert("Guarda dos cuadros consecutivos de lunes a domingo para generar la continuidad semanal.");
+        return;
+    }
+
+    const [cuadroA, cuadroB] = cuadrosOrigen;
+    const secuencias = construirSecuenciasContinuas(cuadroA, cuadroB);
+    if (!secuencias.size) {
+        alert("Los cuadros guardados no contienen secuencias completas de lunes a domingo.");
+        return;
+    }
+
+    const inicioActual = fechasPeriodoActual[0]?.valor;
+    const finReferencia = fechasPeriodoActual.at(-1)?.valor;
+    const cuadroActualEsPosterior = fechasPeriodoActual.length === 7 &&
+        inicioActual > cuadroB.fin &&
+        new Date(`${inicioActual}T00:00:00`).getDay() === 1;
+    const ultimoDia = cuadroActualEsPosterior && finReferencia ? finReferencia : cuadroB.fin;
+    const inicio = sumarDiasAFecha(ultimoDia, 1);
+    const fin = sumarDiasAFecha(inicio, 6);
+    if (!confirm(`Se generará la semana continua del ${inicio} al ${fin} repitiendo la secuencia de «${cuadroA.nombre}» y «${cuadroB.nombre}». ¿Continuar?`)) return;
+
+    const fechasDestino = obtenerFechasPeriodo(inicio, fin);
+    const desplazamientoInicial = ((diferenciaDiasEntreFechas(cuadroA.inicio, inicio) % 14) + 14) % 14;
+    registrarHistorialCambios();
+    empleados.forEach((empleado) => fechasDestino.forEach((fecha) => {
+        const clave = claveCambioTurno(empleado, fecha.valor);
+        delete cambiosTurnosManuales[clave];
+        delete horariosManualesTurnos[clave];
+        delete detallesCambiosManuales[clave];
+    }));
+    guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
+
+    fechaInicioTurnos.value = inicio;
+    fechaFinTurnos.value = fin;
+    generarTurnos();
+
+    const empleadosSinSecuencia = [];
+    asignacionesActuales.forEach((asignacion) => {
+        const secuencia = secuencias.get(asignacion.empleado);
+        if (!secuencia) {
+            empleadosSinSecuencia.push(asignacion.empleado);
+            return;
+        }
+        fechasDestino.forEach((fecha, indice) => {
+            const indiceSecuencia = (desplazamientoInicial + indice) % secuencia.length;
+            const turno = secuencia[indiceSecuencia];
+            const clave = claveCambioTurno(asignacion.empleado, fecha.valor);
+            const unidad = obtenerDatoSecuenciaSemanal(cuadroA, cuadroB, "unidades", asignacion.empleado, indiceSecuencia) || asignacion.unidad;
+            const horario = obtenerDatoSecuenciaSemanal(cuadroA, cuadroB, "horarios", asignacion.empleado, indiceSecuencia);
+            cambiosTurnosManuales[clave] = turno;
+            if (horario) horariosManualesTurnos[clave] = horario;
+            detallesCambiosManuales[clave] = {
+                turnoAnterior: asignacion.turnos[indice],
+                unidadAnterior: asignacion.unidadesPorDia?.[indice] || asignacion.unidad,
+                turnoNuevo: turno,
+                unidadNueva: ["Descanso", "Libre"].includes(turno) ? asignacion.unidad : unidad,
+                observacion: "",
+                ordenadoPor: "",
+                origen: "continuidad-semanal",
+                registradoEl: new Date().toISOString()
+            };
+        });
+    });
+    guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
+    generarTurnos();
+    if (empleadosSinSecuencia.length) {
+        alert(`La continuidad se aplicó. Sin secuencia guardada para: ${empleadosSinSecuencia.join(", ")}; se mantiene la propuesta automática para esas personas.`);
+    }
 }
 
 function guardarCuadroActual() {
@@ -3333,7 +3477,15 @@ function guardarCuadroActual() {
         inicio: fechasPeriodoActual[0].valor,
         fin: fechasPeriodoActual.at(-1).valor,
         unidad: unidadCuadro?.value || "todas",
-        turnos: Object.fromEntries(asignacionesActuales.map((asignacion) => [asignacion.empleado, asignacion.turnos]))
+        turnos: Object.fromEntries(asignacionesActuales.map((asignacion) => [asignacion.empleado, asignacion.turnos])),
+        unidades: Object.fromEntries(asignacionesActuales.map((asignacion) => [
+            asignacion.empleado,
+            fechasPeriodoActual.map((_, indice) => asignacion.unidadesPorDia?.[indice] || asignacion.unidad)
+        ])),
+        horarios: Object.fromEntries(asignacionesActuales.map((asignacion) => [
+            asignacion.empleado,
+            fechasPeriodoActual.map((fecha) => horariosManualesTurnos[claveCambioTurno(asignacion.empleado, fecha.valor)] || "")
+        ]))
     };
     cuadrosGuardados.push(cuadro);
     try {
@@ -3395,6 +3547,59 @@ function limpiarCuadro() {
     generarTurnos();
 }
 
+function generarContinuidadTurnos() {
+    if (!asignacionesActuales.length || !fechasPeriodoActual.length) {
+        alert("Genera o carga primero el cuadro manual que quieres continuar.");
+        return;
+    }
+
+    const ultimoDia = fechasPeriodoActual.at(-1);
+    const cantidadDias = fechasPeriodoActual.length;
+    const siguienteInicio = new Date(`${ultimoDia.valor}T00:00:00`);
+    siguienteInicio.setDate(siguienteInicio.getDate() + 1);
+    const formatearFecha = (fecha) => {
+        const anio = fecha.getFullYear();
+        const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+        const dia = String(fecha.getDate()).padStart(2, "0");
+        return `${anio}-${mes}-${dia}`;
+    };
+    const siguienteFin = new Date(siguienteInicio);
+    siguienteFin.setDate(siguienteFin.getDate() + cantidadDias - 1);
+    const inicio = formatearFecha(siguienteInicio);
+    const fin = formatearFecha(siguienteFin);
+
+    if (!confirm(`Se generará la continuidad del ${inicio} al ${fin} usando el último turno manual de cada trabajador. ¿Continuar?`)) return;
+
+    const semillas = {};
+    asignacionesActuales.forEach((asignacion) => {
+        const turnosPermitidos = obtenerTurnosResponsabilidad(asignacion.unidad, asignacion.regla)
+            .filter((turno) => !["Vacaciones", "Descanso", "Libre"].includes(turno));
+        if (!turnosPermitidos.length) return;
+
+        const ultimoTurno = [...asignacion.turnos].reverse()
+            .find((turno) => turnosPermitidos.includes(turno));
+        const posicion = turnosPermitidos.indexOf(ultimoTurno);
+        if (posicion >= 0) semillas[asignacion.empleado] = (posicion + 1) % turnosPermitidos.length;
+    });
+
+    const fechasSiguientes = obtenerFechasPeriodo(inicio, fin);
+    registrarHistorialCambios();
+    empleados.forEach((empleado) => fechasSiguientes.forEach((fecha) => {
+        const clave = claveCambioTurno(empleado, fecha.valor);
+        delete cambiosTurnosManuales[clave];
+        delete horariosManualesTurnos[clave];
+        delete detallesCambiosManuales[clave];
+    }));
+    guardarCambiosManuales();
+    guardarHorariosManuales();
+    guardarDetallesCambiosManuales();
+
+    fechaInicioTurnos.value = inicio;
+    fechaFinTurnos.value = fin;
+    semillasContinuidad = semillas;
+    generarTurnos();
+}
+
 function eliminarCuadroGuardado() {
     const id = document.getElementById("cuadrosGuardados").value;
     const cuadro = cuadrosGuardados.find((item) => item.id === id);
@@ -3416,10 +3621,11 @@ function aplicarModoManual(activo) {
 
 function actualizarBotonesModoManual() {
     const hayCuadro = asignacionesActuales.length > 0;
-    ["botonGuardarCuadro", "botonImprimirManual", "botonDescargarManual"].forEach((id) => {
+    ["botonGuardarCuadro", "botonImprimirManual", "botonDescargarManual", "botonContinuidadTurnos"].forEach((id) => {
         const boton = document.getElementById(id);
         if (boton) boton.disabled = !hayCuadro;
     });
+    actualizarBotonContinuidadSemanal();
 }
 
 document.getElementById("botonModoManual")?.addEventListener("click", () => {
@@ -3453,11 +3659,13 @@ function cargarCuadroBase() {
 }
 document.getElementById("botonCuadroBase")?.addEventListener("click", cargarCuadroBase);
 document.getElementById("botonLimpiarCuadro")?.addEventListener("click", limpiarCuadro);
+document.getElementById("botonContinuidadTurnos")?.addEventListener("click", generarContinuidadTurnos);
 document.getElementById("botonGuardarCuadro")?.addEventListener("click", guardarCuadroActual);
 document.getElementById("botonImprimirManual")?.addEventListener("click", imprimirSoloCuadro);
 document.getElementById("botonDescargarManual")?.addEventListener("click", descargarCuadroCsv);
 document.getElementById("botonRecuperarCuadro")?.addEventListener("click", recuperarCuadroGuardado);
 document.getElementById("botonEliminarCuadro")?.addEventListener("click", eliminarCuadroGuardado);
+crearBotonContinuidadSemanal();
 renderizarCuadrosGuardados();
 aplicarModoManual(localStorage.getItem(STORAGE_MODO_MANUAL_KEY) === "1");
 
@@ -3618,7 +3826,7 @@ function intercambiarTurnos(origen, destino) {
                 unidadAnterior,
                 turnoNuevo: nuevo,
                 unidadNueva: ["Descanso", "Libre"].includes(nuevo) ? asignacion.unidad : unidadNueva,
-                observacion: "Movido arrastrando en el cuadrante",
+                observacion: "",
                 ordenadoPor: "",
                 registradoEl: new Date().toISOString()
             };
@@ -3694,7 +3902,7 @@ function copiarTurno(origen, destino) {
     if (ocupante && !confirm(`${ocupante} ya tiene ${turno} en ${unidad} ese día. ¿Copiarlo igualmente a ${destino.empleado}?`)) return;
 
     registrarHistorialCambios();
-    aplicarCambioCelda(destino.empleado, destino.fecha, turno, unidad, "Copiado arrastrando en el cuadrante");
+    aplicarCambioCelda(destino.empleado, destino.fecha, turno, unidad, "");
     guardarYRegenerarManual();
 }
 

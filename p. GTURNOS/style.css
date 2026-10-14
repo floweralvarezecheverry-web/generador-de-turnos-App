@@ -1578,15 +1578,6 @@ textarea {
     font-weight: 800;
 }
 
-.nota-cambio-manual {
-    display: block;
-    margin-top: 3px;
-    color: #9a3412;
-    font-size: 0.68rem;
-    line-height: 1.2;
-    white-space: normal;
-}
-
 .celda-turno-editable {
     cursor: pointer;
     transition: background 0.15s ease, box-shadow 0.15s ease;
@@ -1692,6 +1683,14 @@ td {
     font-weight: 500;
 }
 
+.unidad-turno-cuadrante {
+    display: block;
+    margin-top: 3px;
+    color: #0369a1;
+    font-size: 0.66rem;
+    font-weight: 800;
+}
+
 .jornada-parcial-cuadrante {
     display: block;
     margin-top: 2px;
@@ -1720,6 +1719,21 @@ tbody td:first-child {
 
 thead th:first-child {
     z-index: 3;
+    background: #eff6ff;
+}
+
+.fila-empleado-cuadrante:nth-of-type(even) td {
+    background: #f8fafc;
+}
+
+.fila-empleado-cuadrante td:first-child {
+    color: #0f172a;
+    font-size: 0.86rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+}
+
+.fila-empleado-cuadrante:hover td {
     background: #eff6ff;
 }
 
@@ -2104,6 +2118,10 @@ footer {
 .guardados-manual select {
     width: auto;
     flex: 0 1 320px;
+}
+
+.continuidad-ayuda {
+    margin: 12px 0 0;
 }
 
 .pestanas-cuadro {
