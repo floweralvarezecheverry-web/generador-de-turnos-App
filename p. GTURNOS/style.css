@@ -248,20 +248,34 @@ textarea {
     font-size: 0.9rem;
 }
 
-.agregar-unidad {
+.gestor-unidades {
     display: flex;
     align-items: flex-end;
-    gap: 12px;
-    max-width: 620px;
-    margin-bottom: 16px;
+    gap: 16px;
+    max-width: 760px;
+    margin: 18px 0 22px;
+    padding: 16px;
+    border: 1px solid #dbe3f0;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
 }
 
-.agregar-unidad .campo {
+.gestor-unidades .campo {
     flex: 1;
 }
 
-.nuevo-rol-unidad,
-.eliminar-rol-unidad {
+.gestor-unidades-acciones {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.gestor-unidades-acciones .boton {
+    white-space: nowrap;
+}
+
+.nuevo-rol-unidad {
     max-width: 940px;
     margin: 20px 0;
     padding: 14px;
@@ -270,14 +284,12 @@ textarea {
     background: #fff;
 }
 
-.nuevo-rol-unidad h3,
-.eliminar-rol-unidad h3 {
+.nuevo-rol-unidad h3 {
     margin: 0 0 6px;
     font-size: 1rem;
 }
 
-.nuevo-rol-unidad p,
-.eliminar-rol-unidad p {
+.nuevo-rol-unidad p {
     margin: 0 0 12px;
     color: #64748b;
     font-size: 0.88rem;
@@ -285,15 +297,45 @@ textarea {
 
 .nuevo-rol-unidad-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
     margin-bottom: 12px;
 }
 
+.nuevo-rol-unidad-acciones {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.nuevo-rol-unidad-acciones .boton {
+    min-width: 110px;
+}
+
 @media (max-width: 720px) {
-    .agregar-unidad {
+    .gestor-unidades {
         align-items: stretch;
         flex-direction: column;
+    }
+
+    .gestor-unidades-acciones {
+        width: 100%;
+    }
+
+    .gestor-unidades-acciones .boton {
+        flex: 1;
+    }
+
+    .nuevo-rol-unidad-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .nuevo-rol-unidad-acciones {
+        justify-content: stretch;
+    }
+
+    .nuevo-rol-unidad-acciones .boton {
+        flex: 1;
     }
 }
 
@@ -1071,6 +1113,55 @@ textarea {
     min-width: 0;
 }
 
+.mapa-asignacion-cabecera {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 24px 0 14px;
+    padding: 16px;
+    border: 1px solid #dbe3f0;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.mapa-asignacion-cabecera h3 {
+    margin: 0 0 4px;
+    color: #0f172a;
+    font-size: 1.08rem;
+}
+
+.mapa-asignacion-cabecera .ayuda-regla {
+    margin: 0;
+}
+
+.mapa-asignacion-cabecera .boton {
+    flex-shrink: 0;
+}
+
+.boton-activo {
+    border: 1px solid #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.aviso-modo-manual {
+    display: grid;
+    gap: 4px;
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid #bfdbfe;
+    border-left: 4px solid #2563eb;
+    border-radius: 10px;
+    background: #eff6ff;
+    color: #334155;
+    font-size: 0.88rem;
+}
+
+.aviso-modo-manual strong {
+    color: #1e3a8a;
+}
+
 @media (max-width: 720px) {
     .crear-unidad-desde-rol {
         align-items: stretch;
@@ -1764,6 +1855,15 @@ footer {
 
     .tab {
         flex: 1;
+    }
+
+    .mapa-asignacion-cabecera {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .mapa-asignacion-cabecera .boton {
+        width: 100%;
     }
 
     .acciones-formulario {

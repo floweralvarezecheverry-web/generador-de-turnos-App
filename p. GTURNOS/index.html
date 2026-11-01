@@ -225,27 +225,23 @@
             <details class="configuracion-unidades">
                 <summary>Configurar unidades y turnos asignables</summary>
                 <p>Selecciona los códigos de cada unidad. El generador asigna como máximo una persona por código y día (por ejemplo, un M1 y un M2), según el personal disponible.</p>
-                <div class="agregar-unidad">
+                <div class="gestor-unidades">
                     <div class="campo">
-                        <label for="nuevaUnidad">Nueva unidad</label>
-                        <input type="text" id="nuevaUnidad" placeholder="Ejemplo: Unidad 6">
+                        <label for="nuevaUnidad">Unidad</label>
+                        <input type="text" id="nuevaUnidad" placeholder="Ejemplo: Unidad 6" autocomplete="off">
                     </div>
-                    <button id="agregarUnidad" class="boton boton-secundario" type="button">
-                        Añadir unidad
-                    </button>
-                </div>
-                <div class="agregar-unidad quitar-unidad">
-                    <div class="campo">
-                        <label for="unidadQuitar">Quitar unidad</label>
-                        <select id="unidadQuitar"></select>
+                    <div class="gestor-unidades-acciones" aria-label="Acciones de unidad">
+                        <button id="agregarUnidad" class="boton boton-primario" type="button">
+                            Crear unidad
+                        </button>
+                        <button id="quitarUnidadBoton" class="boton boton-peligro" type="button">
+                            Quitar unidad
+                        </button>
                     </div>
-                    <button id="quitarUnidadBoton" class="boton boton-peligro" type="button">
-                        Quitar unidad
-                    </button>
                 </div>
                 <div class="nuevo-rol-unidad">
-                    <h3>Crear rol para una unidad</h3>
-                    <p>Usa códigos que empiecen por M para mañana o T para tarde.</p>
+                    <h3>Gestionar rol para una unidad</h3>
+                    <p>Usa códigos que empiecen por M para mañana o T para tarde. Para quitar un rol, indica la unidad y el código.</p>
                     <div class="nuevo-rol-unidad-grid">
                         <div class="campo">
                             <label for="unidadNuevoRol">Unidad</label>
@@ -253,42 +249,37 @@
                         </div>
                         <div class="campo">
                             <label for="codigoNuevoRolUnidad">Código</label>
-                            <input id="codigoNuevoRolUnidad" type="text" maxlength="8" placeholder="M7 o T5">
-                        </div>
-                        <div class="campo">
-                            <label for="nombreNuevoRolUnidad">Nombre</label>
-                            <input id="nombreNuevoRolUnidad" type="text" placeholder="Nombre del rol">
+                            <input id="codigoNuevoRolUnidad" type="text" maxlength="8" placeholder="M7 o T5" autocomplete="off">
                         </div>
                         <div class="campo">
                             <label for="horarioNuevoRolUnidad">Horario</label>
-                            <input id="horarioNuevoRolUnidad" type="text" placeholder="07:45 - 14:45">
+                            <input id="horarioNuevoRolUnidad" type="text" placeholder="07:45 - 14:45" autocomplete="off">
                         </div>
                         <div class="campo">
                             <label for="descripcionNuevoRolUnidad">Descripción</label>
-                            <input id="descripcionNuevoRolUnidad" type="text" placeholder="Opcional">
+                            <input id="descripcionNuevoRolUnidad" type="text" placeholder="Opcional" autocomplete="off">
                         </div>
                     </div>
-                    <button id="crearRolUnidad" class="boton boton-secundario" type="button">Crear rol y añadirlo a la unidad</button>
-                </div>
-                <div class="eliminar-rol-unidad">
-                    <h3>Eliminar rol de una unidad</h3>
-                    <div class="nuevo-rol-unidad-grid">
-                        <div class="campo">
-                            <label for="unidadEliminarRol">Unidad</label>
-                            <select id="unidadEliminarRol"></select>
-                        </div>
-                        <div class="campo">
-                            <label for="codigoEliminarRolUnidad">Rol personalizado</label>
-                            <select id="codigoEliminarRolUnidad"></select>
-                        </div>
+                    <div class="nuevo-rol-unidad-acciones">
+                        <button id="crearRolUnidad" class="boton boton-primario" type="button">Crear</button>
+                        <button id="eliminarRolUnidad" class="boton boton-peligro" type="button">Quitar</button>
                     </div>
-                    <p>Si ninguna otra unidad utiliza el rol, también se eliminará del catálogo y de las preferencias de empleados.</p>
-                    <button id="eliminarRolUnidad" class="boton boton-peligro" type="button">Eliminar rol de esta unidad</button>
                 </div>
+                <div class="mapa-asignacion-cabecera">
+                    <div>
+                        <h3>Mapa de asignación de turnos</h3>
+                        <p class="ayuda-regla">Define los turnos asignables de cada unidad. Esta configuración se aplica al generar cuadros automáticos.</p>
+                    </div>
+                    <button id="alternarMapaAsignacion" class="boton boton-secundario" type="button" aria-expanded="true" aria-controls="bloqueMapaAsignacion">
+                        Desactivar bloque
+                    </button>
+                </div>
+                <div id="bloqueMapaAsignacion">
                 <div id="configuracionUnidades" class="configuracion-unidades-lista"></div>
                 <button id="guardarConfiguracionUnidades" class="boton boton-secundario" type="button">
                     Guardar configuración de unidades
                 </button>
+                </div>
             </details>
             <p class="nota-seccion">Las reglas particulares de cada empleado se editan desde su ficha, en Gestión de personal.</p>
             </div>
@@ -311,12 +302,6 @@
                     <label for="festivosTurnos">Festivos (fechas AAAA-MM-DD separadas por coma)</label>
                     <input type="text" id="festivosTurnos" placeholder="2026-12-25, 2027-01-01">
                 </div>
-                <div class="campo">
-                    <label for="unidadCuadro">Unidad del cuadro</label>
-                    <select id="unidadCuadro">
-                        <option value="todas">Todas las unidades</option>
-                    </select>
-                </div>
             </div>
             <div class="acciones-generacion">
                 <button id="botonGenerar" class="boton boton-primario" type="button">
@@ -334,6 +319,10 @@
             </div>
             <div id="panelManual" class="panel-manual" hidden>
                 <p class="ayuda-regla">Modo manual: la generación automática queda oculta y el cuadro se trabaja a mano (pulsa o arrastra las celdas). Guarda versiones, imprime o descarga el cuadro (el informe de horas está en la pestaña «Informe»).</p>
+                <div class="aviso-modo-manual" role="note">
+                    <strong>Funciones automáticas no aplicadas en este modo</strong>
+                    <span>No se muestran «Generar turnos», «Generar periodo» ni «Actualizar cuadro», y el cuadro no se recalcula automáticamente al editarlo. Las validaciones de los turnos siguen activas. Sí están disponibles cargar una base, limpiar, generar continuidad, guardar, recuperar, imprimir, descargar y consultar el informe.</span>
+                </div>
                 <div class="barra-manual">
                     <input id="nombreCuadroGuardar" type="text" placeholder="Nombre del cuadro (opcional)" aria-label="Nombre del cuadro a guardar">
                     <button id="botonCuadroBase" class="boton boton-secundario" type="button">Cargar cuadro base</button>

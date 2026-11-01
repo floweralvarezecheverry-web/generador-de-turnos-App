@@ -8,6 +8,7 @@ const STORAGE_ROLES_PERSONALIZADOS_KEY = "rolesPersonalizadosTurnos";
 const STORAGE_HORARIOS_MANUALES_KEY = "horariosManualesTurnos";
 const STORAGE_DETALLES_CAMBIOS_KEY = "detallesCambiosTurnos";
 const STORAGE_MODO_MANUAL_KEY = "modoManualTurnos";
+const STORAGE_MAPA_ASIGNACION_KEY = "mapaAsignacionTurnosActivo";
 const STORAGE_CUADROS_GUARDADOS_KEY = "cuadrosGuardadosTurnos";
 const STORAGE_PAREJAS_KEY = "parejasTurnosTurnos";
 const STORAGE_DIAS_ROL_KEY = "diasPorRolTurnos";
@@ -200,14 +201,10 @@ const configuracionUnidadesElemento = document.getElementById("configuracionUnid
 const guardarConfiguracionUnidadesBoton = document.getElementById("guardarConfiguracionUnidades");
 const nuevaUnidad = document.getElementById("nuevaUnidad");
 const agregarUnidadBoton = document.getElementById("agregarUnidad");
-const unidadQuitar = document.getElementById("unidadQuitar");
 const quitarUnidadBoton = document.getElementById("quitarUnidadBoton");
 const unidadNuevoRol = document.getElementById("unidadNuevoRol");
 const crearRolUnidadBoton = document.getElementById("crearRolUnidad");
-const unidadEliminarRol = document.getElementById("unidadEliminarRol");
-const codigoEliminarRolUnidad = document.getElementById("codigoEliminarRolUnidad");
 const eliminarRolUnidadBoton = document.getElementById("eliminarRolUnidad");
-const unidadCuadro = document.getElementById("unidadCuadro");
 const tabs = document.querySelectorAll(".tab");
 const tabPanels = document.querySelectorAll(".tab-panel");
 const pestañasPrincipales = document.querySelectorAll(".principal-tab");
@@ -301,7 +298,6 @@ if (crearRolUnidadBoton) {
     crearRolUnidadBoton.addEventListener("click", crearRolParaUnidad);
 }
 
-unidadEliminarRol?.addEventListener("change", actualizarRolesEliminarUnidad);
 eliminarRolUnidadBoton?.addEventListener("click", eliminarRolDeUnidadConfigurada);
 
 if (archivoExcel) {
@@ -704,9 +700,9 @@ function registrarRolPersonalizado({ codigo, nombre, horario, descripcion }) {
 function crearRolParaUnidad() {
     const unidad = unidadNuevoRol?.value;
     const codigo = document.getElementById("codigoNuevoRolUnidad")?.value.trim().toUpperCase();
-    const nombre = document.getElementById("nombreNuevoRolUnidad")?.value.trim();
     const horario = document.getElementById("horarioNuevoRolUnidad")?.value.trim();
     const descripcion = document.getElementById("descripcionNuevoRolUnidad")?.value.trim() || "Rol personalizado";
+    const nombre = codigo;
 
     if (!unidad) {
         alert("Selecciona una unidad");
@@ -727,7 +723,7 @@ function crearRolParaUnidad() {
     actualizarSelectorUnidades();
     mostrarEmpleados();
 
-    ["codigoNuevoRolUnidad", "nombreNuevoRolUnidad", "horarioNuevoRolUnidad", "descripcionNuevoRolUnidad"].forEach((id) => {
+    ["codigoNuevoRolUnidad", "horarioNuevoRolUnidad", "descripcionNuevoRolUnidad"].forEach((id) => {
         const campo = document.getElementById(id);
         if (campo) campo.value = "";
     });
@@ -762,18 +758,22 @@ function agregarNuevaUnidad() {
 }
 
 function quitarUnidadConfigurada() {
-    if (!unidadQuitar) return;
+    if (!nuevaUnidad) return;
 
-    const unidad = unidadQuitar.value;
+    const unidad = nuevaUnidad.value.trim().replace(/\s+/g, " ");
     if (!unidad) {
-        alert("No hay unidades para quitar");
+        alert("Escribe el nombre de la unidad que quieres quitar");
         return;
     }
 
     if (!window.confirm(`¿Quieres quitar la unidad ${unidad}? Los empleados que la tengan asignada quedarán sin esa unidad.`)) return;
 
     const clave = Object.keys(configuracionUnidades).find((item) => unidadesSonIguales(item, unidad));
-    if (clave) delete configuracionUnidades[clave];
+    if (!clave) {
+        alert("No se encontró una unidad con ese nombre");
+        return;
+    }
+    delete configuracionUnidades[clave];
     localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
 
     Object.values(reglasPorEmpleado).forEach((regla) => {
@@ -788,30 +788,9 @@ function quitarUnidadConfigurada() {
 
     renderizarConfiguracionUnidades();
     actualizarSelectorUnidades();
-    actualizarSelectorUnidadQuitar();
     mostrarEmpleados();
+    nuevaUnidad.value = "";
     alert(`Unidad ${unidad} eliminada`);
-}
-
-function actualizarSelectorUnidadQuitar() {
-    if (!unidadQuitar) return;
-    const valor = unidadQuitar.value;
-    unidadQuitar.innerHTML = "";
-    const unidades = ordenarUnidades(Object.keys(configuracionUnidades), (unidad) => unidad);
-    unidades.forEach((unidad) => {
-        const opcion = document.createElement("option");
-        opcion.value = unidad;
-        opcion.textContent = unidad;
-        unidadQuitar.appendChild(opcion);
-    });
-    if (!unidades.length) {
-        const opcion = document.createElement("option");
-        opcion.value = "";
-        opcion.textContent = "No hay unidades configuradas";
-        unidadQuitar.appendChild(opcion);
-    }
-    const opcionSeleccionada = Array.from(unidadQuitar.options).find((opcion) => opcion.value === valor);
-    if (opcionSeleccionada) unidadQuitar.value = valor;
 }
 
 function obtenerColorUnidadDisponible() {
@@ -873,8 +852,6 @@ function renderizarConfiguracionUnidades() {
         configuracionUnidadesElemento.appendChild(bloque);
     });
     actualizarSelectorUnidadNuevoRol();
-    actualizarSelectorUnidadEliminarRol();
-    actualizarSelectorUnidadQuitar();
     renderizarPuestosUnidades();
     renderizarDiasPorRol();
     renderizarParejas();
@@ -894,59 +871,30 @@ function actualizarSelectorUnidadNuevoRol() {
     if (opcionAnterior) unidadNuevoRol.value = opcionAnterior.value;
 }
 
-function actualizarSelectorUnidadEliminarRol() {
-    if (!unidadEliminarRol) return;
-    const valorAnterior = unidadEliminarRol.value;
-    unidadEliminarRol.innerHTML = "";
-    ordenarUnidades(Object.keys(configuracionUnidades), (unidad) => unidad).forEach((unidad) => {
-        const opcion = document.createElement("option");
-        opcion.value = unidad;
-        opcion.textContent = unidad;
-        unidadEliminarRol.appendChild(opcion);
-    });
-    const opcionAnterior = Array.from(unidadEliminarRol.options).find((opcion) => unidadesSonIguales(opcion.value, valorAnterior));
-    if (opcionAnterior) unidadEliminarRol.value = opcionAnterior.value;
-    actualizarRolesEliminarUnidad();
-}
-
-function actualizarRolesEliminarUnidad() {
-    if (!codigoEliminarRolUnidad) return;
-    const valorAnterior = codigoEliminarRolUnidad.value;
-    codigoEliminarRolUnidad.innerHTML = "";
-    const unidad = unidadEliminarRol?.value;
-    const configuracion = Object.entries(configuracionUnidades).find(([nombre]) => unidadesSonIguales(nombre, unidad))?.[1];
-    const rolesUnidad = (configuracion?.turnos || [])
-        .map((codigo) => rolesPersonalizadosGuardados.find((rol) => rol.codigo === codigo))
-        .filter(Boolean);
-
-    rolesUnidad.forEach((rol) => {
-        const opcion = document.createElement("option");
-        opcion.value = rol.codigo;
-        opcion.textContent = `${rol.codigo} · ${rol.nombre}`;
-        codigoEliminarRolUnidad.appendChild(opcion);
-    });
-    if (!rolesUnidad.length) {
-        const opcion = document.createElement("option");
-        opcion.value = "";
-        opcion.textContent = "No hay roles personalizados en esta unidad";
-        codigoEliminarRolUnidad.appendChild(opcion);
-    }
-    const opcionAnterior = Array.from(codigoEliminarRolUnidad.options).find((opcion) => opcion.value === valorAnterior);
-    if (opcionAnterior) codigoEliminarRolUnidad.value = valorAnterior;
-}
-
 function eliminarRolDeUnidadConfigurada() {
-    const unidad = unidadEliminarRol?.value;
-    const codigo = codigoEliminarRolUnidad?.value;
+    const unidad = unidadNuevoRol?.value;
+    const codigo = document.getElementById("codigoNuevoRolUnidad")?.value.trim().toUpperCase();
     if (!unidad || !codigo) {
-        alert("Selecciona un rol personalizado para eliminar");
+        alert("Selecciona una unidad e indica el código del rol");
         return;
     }
-    if (!window.confirm(`¿Quieres quitar el rol ${codigo} de ${unidad}?`)) return;
+
+    const claveUnidad = Object.keys(configuracionUnidades).find((nombre) => unidadesSonIguales(nombre, unidad));
+    if (!claveUnidad) {
+        alert("La unidad seleccionada ya no está disponible");
+        return;
+    }
+    if (!rolesPersonalizadosGuardados.some((rol) => rol.codigo === codigo)) {
+        alert("Solo se pueden quitar roles personalizados");
+        return;
+    }
+    if (!configuracionUnidades[claveUnidad].turnos.includes(codigo)) {
+        alert(`El rol ${codigo} no está asignado a ${claveUnidad}`);
+        return;
+    }
+    if (!window.confirm(`¿Quieres quitar el rol ${codigo} de ${claveUnidad}?`)) return;
 
     sincronizarConfiguracionUnidadesDesdeFormulario();
-    const claveUnidad = Object.keys(configuracionUnidades).find((nombre) => unidadesSonIguales(nombre, unidad));
-    if (!claveUnidad) return;
     configuracionUnidades[claveUnidad].turnos = configuracionUnidades[claveUnidad].turnos.filter((turno) => turno !== codigo);
 
     const sigueAsignado = Object.values(configuracionUnidades).some((configuracion) => configuracion.turnos.includes(codigo));
@@ -955,6 +903,9 @@ function eliminarRolDeUnidadConfigurada() {
     renderizarConfiguracionUnidades();
     actualizarSelectorUnidades();
     mostrarEmpleados();
+    const codigoCampo = document.getElementById("codigoNuevoRolUnidad");
+    if (codigoCampo) codigoCampo.value = "";
+    alert(`Rol ${codigo} eliminado de ${claveUnidad}`);
 }
 
 function renderizarPuestosUnidades() {
@@ -1129,6 +1080,12 @@ function guardarParejas() {
     localStorage.setItem(STORAGE_PAREJAS_KEY, JSON.stringify(parejasTurno));
 }
 
+function actualizarCuadroTrasCambioParejas() {
+    const panelManual = document.getElementById("panelManual");
+    if (!asignacionesActuales.length || panelManual && !panelManual.hidden) return;
+    generarTurnos();
+}
+
 function obtenerRolesUnidadPareja(unidad) {
     return (configuracionUnidades[unidad]?.turnos || []).filter((turno) =>
         ["mañanas", "tardes"].includes(clasificarTurno(turno)) && turno !== "Vacaciones");
@@ -1174,6 +1131,7 @@ function renderizarParejas() {
             parejasTurno.reglas.splice(indice, 1);
             guardarParejas();
             renderizarParejas();
+            actualizarCuadroTrasCambioParejas();
         });
         item.appendChild(quitar);
         lista.appendChild(item);
@@ -1210,6 +1168,7 @@ function agregarPareja() {
     if (!anadirReglaPareja({ unidad, a, b, dias })) return;
     guardarParejas();
     renderizarParejas();
+    actualizarCuadroTrasCambioParejas();
 }
 
 function aplicarPlantillaParejas() {
@@ -1229,12 +1188,14 @@ function aplicarPlantillaParejas() {
     guardarParejas();
     renderizarParejas();
     renderizarPuestosUnidades();
+    actualizarCuadroTrasCambioParejas();
 }
 
 document.getElementById("alternarParejas")?.addEventListener("click", () => {
     parejasTurno.activa = !parejasTurno.activa;
     guardarParejas();
     renderizarParejas();
+    actualizarCuadroTrasCambioParejas();
 });
 document.getElementById("parejaUnidad")?.addEventListener("change", renderizarParejas);
 document.getElementById("agregarPareja")?.addEventListener("click", agregarPareja);
@@ -1406,18 +1367,7 @@ document.querySelectorAll("[data-reglas-tab]").forEach((boton) => {
 document.getElementById("guardarPuestosUnidades")?.addEventListener("click", guardarPuestosUnidades);
 
 function actualizarSelectorUnidades() {
-    if (!unidadCuadro) return;
-    const valor = unidadCuadro.value || "todas";
-    unidadCuadro.innerHTML = '<option value="todas">Todas las unidades</option>';
-    const unidades = obtenerUnidadesConfiguradasUnicas();
-    ordenarUnidades(unidades, (unidad) => unidad).forEach((unidad) => {
-        const opcion = document.createElement("option");
-        opcion.value = unidad;
-        opcion.textContent = unidad;
-        unidadCuadro.appendChild(opcion);
-    });
-    const opcionSeleccionada = Array.from(unidadCuadro.options).find((opcion) => unidadesSonIguales(opcion.value, valor));
-    unidadCuadro.value = opcionSeleccionada ? opcionSeleccionada.value : "todas";
+    // Las vistas de cuadrante trabajan siempre con todas las unidades configuradas.
 }
 
 function obtenerUnidadesConfiguradasUnicas() {
@@ -2630,11 +2580,9 @@ function generarTurnos() {
         return;
     }
 
-    const filtroUnidad = unidadCuadro?.value || "todas";
     const empleadosActivos = empleados.filter((empleado) => {
         const regla = reglasPorEmpleado[empleado] || {};
-        const unidad = obtenerUnidadAsignada(regla);
-        return regla.participaRotacion !== false && (filtroUnidad === "todas" || unidadesSonIguales(unidad, filtroUnidad));
+        return regla.participaRotacion !== false;
     });
     if (empleadosActivos.length === 0) {
         alert("Activa al menos un empleado para generar la rotación");
@@ -2656,7 +2604,7 @@ function generarTurnos() {
 
     asignacionesActuales = asignaciones;
     prepararTurnosIndividuales();
-    actualizarResumenCuadro(asignaciones, fechasPeriodo, filtroUnidad);
+    actualizarResumenCuadro(asignaciones, fechasPeriodo, "todas");
 
     ordenCuadros.forEach((grupo) => {
         if (grupo !== "tardes" && grupo !== "otros") {
@@ -2962,6 +2910,7 @@ function elegirTurnoCobertura(registro, unidad, grupo, usados) {
 }
 
 function intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo) {
+    if (!turnoAsignableEnUnidad(unidad, turno)) return false;
     const original = registro.turnosOriginalesPorFecha;
     const previo = original[dia];
     const normalizar = (turnos) => {
@@ -3476,7 +3425,7 @@ function guardarCuadroActual() {
         nombre: nombre.trim(),
         inicio: fechasPeriodoActual[0].valor,
         fin: fechasPeriodoActual.at(-1).valor,
-        unidad: unidadCuadro?.value || "todas",
+        unidad: "todas",
         turnos: Object.fromEntries(asignacionesActuales.map((asignacion) => [asignacion.empleado, asignacion.turnos])),
         unidades: Object.fromEntries(asignacionesActuales.map((asignacion) => [
             asignacion.empleado,
@@ -3506,7 +3455,6 @@ function recuperarCuadroGuardado() {
     if (!cuadro) return;
     if (fechaInicioTurnos) fechaInicioTurnos.value = cuadro.inicio;
     if (fechaFinTurnos) fechaFinTurnos.value = cuadro.fin;
-    if (unidadCuadro && [...unidadCuadro.options].some((o) => o.value === cuadro.unidad)) unidadCuadro.value = cuadro.unidad;
     registrarHistorialCambios();
     const fechas = obtenerFechasPeriodo(cuadro.inicio, cuadro.fin);
     Object.keys(cuadro.turnos).forEach((empleado) => fechas.forEach((fecha) => {
@@ -3609,6 +3557,22 @@ function eliminarCuadroGuardado() {
     renderizarCuadrosGuardados();
 }
 
+function aplicarEstadoMapaAsignacion(activo) {
+    const bloque = document.getElementById("bloqueMapaAsignacion");
+    const boton = document.getElementById("alternarMapaAsignacion");
+    if (!bloque || !boton) return;
+    localStorage.setItem(STORAGE_MAPA_ASIGNACION_KEY, activo ? "1" : "0");
+    bloque.hidden = !activo;
+    boton.textContent = activo ? "Desactivar bloque" : "Activar bloque";
+    boton.setAttribute("aria-expanded", String(activo));
+    boton.classList.toggle("boton-activo", activo);
+}
+
+document.getElementById("alternarMapaAsignacion")?.addEventListener("click", () => {
+    const bloque = document.getElementById("bloqueMapaAsignacion");
+    aplicarEstadoMapaAsignacion(Boolean(bloque?.hidden));
+});
+
 function aplicarModoManual(activo) {
     localStorage.setItem(STORAGE_MODO_MANUAL_KEY, activo ? "1" : "0");
     const boton = document.getElementById("botonModoManual");
@@ -3667,6 +3631,7 @@ document.getElementById("botonRecuperarCuadro")?.addEventListener("click", recup
 document.getElementById("botonEliminarCuadro")?.addEventListener("click", eliminarCuadroGuardado);
 crearBotonContinuidadSemanal();
 renderizarCuadrosGuardados();
+aplicarEstadoMapaAsignacion(localStorage.getItem(STORAGE_MAPA_ASIGNACION_KEY) !== "0");
 aplicarModoManual(localStorage.getItem(STORAGE_MODO_MANUAL_KEY) === "1");
 
 function actualizarResumenCuadro(asignaciones, fechasPeriodo, filtroUnidad) {
@@ -4382,11 +4347,19 @@ function normalizarTurnosParaUnidad(unidad, turnos) {
 
 function turnoPermitidoParaEmpleado(unidad, regla, turno, turnoActual = "") {
     if (["Descanso", "Libre", "Vacaciones"].includes(turno) || turno === turnoActual) return true;
+    if (!turnoAsignableEnUnidad(unidad, turno)) return false;
     if (obtenerTurnosResponsabilidad(unidad, regla).includes(turno)) return true;
     if (diasPorRol.some((item) => item.codigo === turno && reglasPorEmpleado[item.empleado] === regla)) return true;
     // Los empleados de la unidad pueden cubrir cualquier turno configurado en ella.
     const grupos = obtenerGruposTurnosUnidad(unidad, regla);
     return Boolean(grupos && [...grupos.manana, ...grupos.tarde].includes(turno));
+}
+
+function turnoAsignableEnUnidad(unidad, turno) {
+    if (["Descanso", "Libre", "Vacaciones"].includes(turno)) return true;
+    const configuracion = obtenerConfiguracionUnidad(unidad);
+    if (!configuracion || !Array.isArray(configuracion.turnos)) return true;
+    return configuracion.turnos.includes(turno);
 }
 
 function obtenerTurnosResponsabilidad(unidad, regla) {
@@ -4395,7 +4368,9 @@ function obtenerTurnosResponsabilidad(unidad, regla) {
     if (!grupos) return preferidos;
 
     const rolesPersonalizados = Array.isArray(regla?.reglasPersonalizadas)
-        ? regla.reglasPersonalizadas.map((turno) => turno.codigo)
+        ? regla.reglasPersonalizadas
+            .map((turno) => turno.codigo)
+            .filter((codigo) => turnoAsignableEnUnidad(unidad, codigo))
         : [];
     const turnosPermitidos = new Set([...grupos.manana, ...grupos.tarde, ...rolesPersonalizados, "Vacaciones"]);
     const preferidosCompatibles = preferidos.filter((turno) => turnosPermitidos.has(turno));
