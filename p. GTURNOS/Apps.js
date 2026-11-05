@@ -12,6 +12,7 @@ const STORAGE_MAPA_ASIGNACION_KEY = "mapaAsignacionTurnosActivo";
 const STORAGE_CUADROS_GUARDADOS_KEY = "cuadrosGuardadosTurnos";
 const STORAGE_PAREJAS_KEY = "parejasTurnosTurnos";
 const STORAGE_DIAS_ROL_KEY = "diasPorRolTurnos";
+const COLOR_UNIDAD_PREDETERMINADO = "#2563eb";
 const STORAGE_REGLAS_GENERALES_KEY = "reglasGeneralesTurnos";
 const REGLAS_GENERALES_BASE = {
     descansoEntreTurnos: { activa: true, valor: 12 },
@@ -229,7 +230,6 @@ const catalogoTurnos = [
     { codigo: "RF", nombre: "Refuerzo matutino", horario: "07:45 - 11:45", descripcion: "Apoyo específico durante horas pico." },
     { codigo: "Vacaciones", nombre: "Vacaciones", horario: "No trabaja", descripcion: "Ausencia planificada entre las fechas indicadas." }
 ];
-const COLOR_UNIDAD_PREDETERMINADO = "#2563eb";
 const RESPONSABILIDADES_POR_CARGO = {
     Coordinador: ["Organizar la actividad del equipo", "Supervisar cobertura y unidades", "Resolver incidencias operativas"],
     Auxiliar: ["Apoyar la atención y las tareas asignadas", "Preparar materiales y espacios", "Informar de incidencias al responsable"],
@@ -238,6 +238,191 @@ const RESPONSABILIDADES_POR_CARGO = {
     Médico: ["Valorar y planificar la atención médica", "Registrar diagnósticos e indicaciones", "Coordinar decisiones clínicas"],
     Otros: ["Definir responsabilidades específicas del puesto", "Cumplir las tareas asignadas", "Comunicar incidencias al responsable"]
 };
+const GRUPOS_TURNO_PERFIL = {
+    manana: (codigo) => /^(M|CD|RF)/.test(codigo),
+    tarde: (codigo) => /^T/.test(codigo),
+    noche: (codigo) => /^N/.test(codigo)
+};
+// Cualidades de turno por profesión: grupos permitidos, máximo de días seguidos, días libres fijos y turnos preferidos.
+// M1 es un turno exclusivo de Auxiliar: el resto de profesiones lo tienen en "excluidos".
+const PERFILES_PROFESION = {
+    Coordinador: {
+        icono: "🧭", grupos: ["manana"], excluidos: ["M1"], maxConsecutivos: 5, diasLibre: ["Sábado", "Domingo"],
+        preferidos: ["M2"], rotacionLibres: false,
+        descripcion: "Horario de mañana (sin M1), fines de semana libres y máximo 5 días seguidos."
+    },
+    Auxiliar: {
+        icono: "🤝", grupos: ["manana", "tarde"], maxConsecutivos: 5, diasLibre: [],
+        preferidos: ["M1", "T1"], rotacionLibres: true,
+        descripcion: "Rota entre mañana y tarde con descansos rotativos y máximo 5 días seguidos."
+    },
+    Limpieza: {
+        icono: "🧽", grupos: ["manana"], excluidos: ["M1"], maxConsecutivos: 5, diasLibre: ["Domingo"],
+        preferidos: ["M3", "M2"], rotacionLibres: true,
+        descripcion: "Solo turnos de mañana, domingo libre y máximo 5 días seguidos."
+    },
+    Enfermero: {
+        icono: "🩺", grupos: ["manana", "tarde", "noche"], excluidos: ["M1"], maxConsecutivos: 4, diasLibre: [],
+        preferidos: ["M2", "T1"], rotacionLibres: true,
+        descripcion: "Cobertura de mañana, tarde y noche con máximo 4 días seguidos."
+    },
+    Médico: {
+        icono: "⚕️", grupos: ["manana", "tarde"], excluidos: ["M1"], maxConsecutivos: 4, diasLibre: ["Domingo"],
+        preferidos: ["M2", "T1"], rotacionLibres: true,
+        descripcion: "Mañana o tarde, domingo libre y máximo 4 días seguidos."
+    },
+    Otros: {
+        icono: "👤", grupos: ["manana", "tarde", "noche"], maxConsecutivos: 5, diasLibre: [],
+        preferidos: ["M1"], rotacionLibres: true,
+        descripcion: "Sin restricciones propias: se usan solo las reglas generales y de la unidad."
+    }
+};
+let cargoFiltroActual = "";
+
+function obtenerPerfilProfesion(cargo) {
+    return PERFILES_PROFESION[cargo] || PERFILES_PROFESION.Otros;
+}
+
+function codigoEnGruposPerfil(codigo, perfil) {
+    // Los roles creados por el usuario se respetan siempre: la profesión solo restringe el catálogo base.
+    if (esRolPersonalizado(codigo)) return true;
+    if (perfil.excluidos?.includes(codigo)) return false;
+    const esEstandar = Object.values(GRUPOS_TURNO_PERFIL).some((prueba) => prueba(codigo));
+    if (!esEstandar) return true;
+    return perfil.grupos.some((grupo) => GRUPOS_TURNO_PERFIL[grupo](codigo));
+}
+
+// Punto único de control: un turno o rol solo se asigna si corresponde a la profesión del empleado.
+function turnoCompatibleConProfesion(regla, turno) {
+    if (["Descanso", "Libre", "Vacaciones"].includes(turno)) return true;
+    if (regla?.perfilProfesionActivo === false) return true;
+    return codigoEnGruposPerfil(turno, obtenerPerfilProfesion(regla?.cargo));
+}
+
+function filtrarTurnosPorPerfil(turnos, regla) {
+    if (regla?.perfilProfesionActivo === false) return turnos;
+    const perfil = obtenerPerfilProfesion(regla?.cargo);
+    const permitidos = turnos.filter((turno) => turno === "Vacaciones" || codigoEnGruposPerfil(turno, perfil));
+    return permitidos.some((turno) => turno !== "Vacaciones") ? permitidos : turnos;
+}
+
+function obtenerMaxConsecutivosEfectivo(regla) {
+    const propio = Number(regla?.maxTurnos) || 0;
+    if (regla?.perfilProfesionActivo === false) return propio;
+    const limite = obtenerPerfilProfesion(regla?.cargo).maxConsecutivos;
+    return propio ? Math.min(propio, limite) : limite;
+}
+
+function aplicarPerfilProfesionAEmpleado(nombre) {
+    const regla = reglasPorEmpleado[nombre];
+    if (!regla) return false;
+    const cargo = regla.cargo || "Otros";
+    const perfil = obtenerPerfilProfesion(cargo);
+    const unidad = obtenerUnidadAsignada(regla, "");
+    const candidatos = obtenerCatalogoTurnosEmpleado(regla)
+        .map((turno) => turno.codigo)
+        .filter((codigo) => Object.values(GRUPOS_TURNO_PERFIL).some((prueba) => prueba(codigo)))
+        .filter((codigo) => codigoEnGruposPerfil(codigo, perfil) && turnoAsignableEnUnidad(unidad, codigo));
+    if (!candidatos.length) return false;
+
+    const preferidos = perfil.preferidos.filter((codigo) => candidatos.includes(codigo));
+    const turnosPreferidos = preferidos.length ? preferidos : [candidatos[0]];
+    reglasPorEmpleado[nombre] = {
+        ...regla,
+        perfilProfesionActivo: true,
+        turnosPreferidos,
+        turnoPreferido: turnosPreferidos[0],
+        maxTurnos: Math.min(Number(regla.maxTurnos) || perfil.maxConsecutivos, perfil.maxConsecutivos),
+        descanso: true,
+        rotacionLibres: perfil.rotacionLibres,
+        diasLibre: [...new Set([...(regla.diasLibre || []), ...perfil.diasLibre])]
+    };
+    return true;
+}
+
+function aplicarPerfilAProfesion(cargo) {
+    const afectados = empleados.filter((nombre) => (reglasPorEmpleado[nombre]?.cargo || "Otros") === cargo);
+    const aplicados = afectados.filter(aplicarPerfilProfesionAEmpleado).length;
+    if (aplicados) {
+        guardarReglas();
+        mostrarEmpleados();
+    }
+    return { total: afectados.length, aplicados };
+}
+
+function cargoDeEmpleado(nombre) {
+    return reglasPorEmpleado[nombre]?.cargo || "Otros";
+}
+
+// Un único filtro compartido por Gestión de personal y Generador/cuadrante.
+function establecerFiltroProfesion(cargo) {
+    cargoFiltroActual = cargo;
+    mostrarEmpleados();
+    if (asignacionesActuales.length) renderizarCuadrosVisibles();
+}
+
+function renderizarPanelProfesiones() {
+    const detalle = document.getElementById("detalleProfesion");
+    ["filtroProfesiones", "filtroProfesionesCuadro"].forEach((id) => {
+        const contenedor = document.getElementById(id);
+        if (contenedor) renderizarBotonesProfesion(contenedor);
+    });
+    if (!detalle) return;
+    detalle.hidden = !cargoFiltroActual;
+    if (cargoFiltroActual) {
+        detalle.dataset.cargo = cargoFiltroActual;
+        const perfil = obtenerPerfilProfesion(cargoFiltroActual);
+        const descripcion = document.getElementById("descripcionProfesion");
+        if (descripcion) descripcion.textContent = `${cargoFiltroActual}: ${perfil.descripcion}`;
+    }
+}
+
+function renderizarBotonesProfesion(contenedor) {
+    contenedor.innerHTML = "";
+    const opciones = [["", "Todas"], ...Object.keys(PERFILES_PROFESION).map((cargo) => [cargo, cargo])];
+    opciones.forEach(([cargo, etiqueta]) => {
+        const cantidad = empleados.filter((nombre) => !cargo || (reglasPorEmpleado[nombre]?.cargo || "Otros") === cargo).length;
+        const boton = document.createElement("button");
+        boton.type = "button";
+        boton.className = "boton-profesion" + (cargoFiltroActual === cargo ? " activo" : "");
+        boton.dataset.cargo = cargo;
+        boton.setAttribute("aria-pressed", String(cargoFiltroActual === cargo));
+        boton.textContent = `${cargo ? obtenerPerfilProfesion(cargo).icono + " " : ""}${etiqueta} (${cantidad})`;
+        boton.addEventListener("click", () => establecerFiltroProfesion(cargo));
+        contenedor.appendChild(boton);
+    });
+}
+
+function aplicarPerfilProfesionSeleccionada() {
+    if (!cargoFiltroActual) return;
+    const { total, aplicados } = aplicarPerfilAProfesion(cargoFiltroActual);
+    alert(total
+        ? `Perfil de ${cargoFiltroActual} aplicado a ${aplicados} de ${total} empleado(s).`
+        : `No hay empleados con el cargo ${cargoFiltroActual}.`);
+}
+
+function generarTurnosProfesionSeleccionada() {
+    if (!cargoFiltroActual) return;
+    if (!empleados.some((nombre) => (reglasPorEmpleado[nombre]?.cargo || "Otros") === cargoFiltroActual)) {
+        alert(`No hay empleados con el cargo ${cargoFiltroActual}.`);
+        return;
+    }
+    generarTurnosDesdeBoton();
+}
+
+function aplicarPerfilAlEmpleadoActivo() {
+    const nombre = empleadoActivo.nombre;
+    if (!nombre || !reglasPorEmpleado[nombre]) return;
+    reglasPorEmpleado[nombre].cargo = cargoEmpleadoModal?.value || reglasPorEmpleado[nombre].cargo || "Otros";
+    if (!aplicarPerfilProfesionAEmpleado(nombre)) {
+        alert("Ningún turno de la unidad es compatible con este perfil profesional");
+        return;
+    }
+    guardarReglas();
+    mostrarEmpleados();
+    abrirModalEmpleado(nombre);
+    alert("Perfil profesional aplicado");
+}
 
 function actualizarFechaHora() {
     if (!fechaHoraActual) return;
@@ -271,16 +456,22 @@ if (botonAgregar && nombreEmpleado && listaEmpleados) {
 }
 
 if (botonGenerar) {
-    botonGenerar.addEventListener("click", generarTurnos);
+    botonGenerar.addEventListener("click", generarTurnosDesdeBoton);
 }
 
 if (botonGenerarPeriodo) {
-    botonGenerarPeriodo.addEventListener("click", generarTurnos);
+    botonGenerarPeriodo.addEventListener("click", generarTurnosDesdeBoton);
 }
 
 if (botonActualizarCuadro) {
-    botonActualizarCuadro.addEventListener("click", generarTurnos);
+    botonActualizarCuadro.addEventListener("click", generarTurnosDesdeBoton);
 }
+
+[fechaInicioTurnos, fechaFinTurnos].forEach((campo) => {
+    campo?.addEventListener("change", () => {
+        fechasPeriodoManuales = true;
+    });
+});
 
 if (guardarConfiguracionUnidadesBoton) {
     guardarConfiguracionUnidadesBoton.addEventListener("click", guardarConfiguracionUnidades);
@@ -311,6 +502,10 @@ if (botonTodosEmpleados) {
 if (buscadorEmpleados) {
     buscadorEmpleados.addEventListener("input", mostrarEmpleados);
 }
+
+document.getElementById("botonAplicarPerfilProfesion")?.addEventListener("click", aplicarPerfilProfesionSeleccionada);
+document.getElementById("botonGenerarProfesion")?.addEventListener("click", generarTurnosProfesionSeleccionada);
+document.getElementById("botonPerfilEmpleado")?.addEventListener("click", aplicarPerfilAlEmpleadoActivo);
 
 if (cargoEmpleadoModal) {
     cargoEmpleadoModal.addEventListener("change", () => mostrarResponsabilidadesCargo(cargoEmpleadoModal.value));
@@ -971,7 +1166,7 @@ function obtenerRolesDiasPorRolEmpleado(empleado) {
     const propios = (regla?.reglasPersonalizadas || []).map((turno) => turno.codigo);
     const globales = rolesPersonalizadosGuardados.map((turno) => turno.codigo);
     const compatibles = new Set([...codigosUnidad, ...propios, ...globales]);
-    return obtenerRolesDiasPorRol().filter((turno) => compatibles.has(turno.codigo));
+    return obtenerRolesDiasPorRol().filter((turno) => compatibles.has(turno.codigo) && turnoCompatibleConProfesion(regla, turno.codigo));
 }
 
 function renderizarDiasPorRol() {
@@ -1043,6 +1238,10 @@ function agregarDiasPorRol() {
     }
     const codigo = cargarNuevoRolDias(true);
     if (!codigo) return;
+    if (!turnoCompatibleConProfesion(reglasPorEmpleado[empleado], codigo)) {
+        alert(`${codigo} no corresponde a la profesión de ${empleado} (${reglasPorEmpleado[empleado]?.cargo || "Otros"})`);
+        return;
+    }
     const compatibles = obtenerRolesDiasPorRolEmpleado(empleado);
     if (reglasGenerales.respetarPuesto.activa && compatibles.length && !compatibles.some((turno) => turno.codigo === codigo)) {
         const unidad = obtenerUnidadAsignada(reglasPorEmpleado[empleado], "sin unidad");
@@ -1286,7 +1485,8 @@ function aplicarDiasPorRol(todosRegistros, fechasPeriodo) {
     const trabaja = (turno) => !["Descanso", "Libre", "Vacaciones"].includes(turno);
     const descansa = (turno) => ["Descanso", "Libre"].includes(turno);
     const reglasValidas = diasPorRol.filter((regla) =>
-        obtenerCatalogoTurnosEmpleado({}).some((turno) => turno.codigo === regla.codigo)
+        obtenerCatalogoTurnosEmpleado({}).some((turno) => turno.codigo === regla.codigo) &&
+        turnoCompatibleConProfesion(reglasPorEmpleado[regla.empleado], regla.codigo)
     );
 
     // Primero se recortan los excesos para que los días liberados puedan reutilizarse.
@@ -1524,9 +1724,11 @@ function mostrarEmpleados() {
     if (!listaEmpleados) return;
 
     listaEmpleados.innerHTML = "";
+    renderizarPanelProfesiones();
     const textoBusqueda = buscadorEmpleados?.value.trim().toLocaleLowerCase("es-ES") || "";
     const empleadosFiltrados = empleados.filter((nombre) => {
         const unidad = reglasPorEmpleado[nombre]?.rotacionUnidades || "";
+        if (cargoFiltroActual && (reglasPorEmpleado[nombre]?.cargo || "Otros") !== cargoFiltroActual) return false;
         return `${nombre} ${unidad}`.toLocaleLowerCase("es-ES").includes(textoBusqueda);
     });
 
@@ -1536,6 +1738,7 @@ function mostrarEmpleados() {
         const regla = reglasPorEmpleado[nombre] || {};
         const item = document.createElement("div");
         item.className = "empleado-item" + (empleadoActivo.nombre === nombre ? " activo" : "");
+        item.dataset.cargo = regla.cargo || "Otros";
         const colorUnidad = obtenerColorUnidad(obtenerUnidadAsignada(regla, ""), regla.colorUnidad);
         item.style.setProperty("--color-unidad", colorUnidad);
         const ficha = document.createElement("button");
@@ -1944,6 +2147,13 @@ function renderizarReglasEmpleadoModal(nombre) {
         input.dataset.turnoCodigo = turno.codigo;
         input.dataset.tipoTurno = "preferido";
         input.checked = turnosSeleccionados.includes(turno.codigo);
+        const cargoModal = cargoEmpleadoModal?.value || reglasPorEmpleado[nombre]?.cargo;
+        if (!turnoCompatibleConProfesion({ ...reglasPorEmpleado[nombre], cargo: cargoModal }, turno.codigo)) {
+            input.checked = false;
+            input.disabled = true;
+            label.classList.add("turno-no-profesion");
+            label.title = `No corresponde a la profesión (${cargoModal || "Otros"})`;
+        }
         input.addEventListener("change", () => {
             if (input.checked) actualizarHorarioActivo(grupo, turno.horario);
             else if (!selectorTurnos.querySelector(`input[data-tipo-turno='preferido'][data-grupo-turno='${grupo}']:checked`)) {
@@ -2212,9 +2422,10 @@ function guardarCambiosEmpleado() {
     const reglaActual = reglasPorEmpleado[empleadoAnterior] || {};
     const turnosPreferidos = Array.from(document.querySelectorAll("#contenedorReglasEmpleado input[data-tipo-turno='preferido']"))
         .filter((input) => input.checked)
-        .map((input) => input.value);
+        .map((input) => input.value)
+        .filter((turno) => turnoCompatibleConProfesion({ ...reglaActual, cargo: cargoEmpleadoModal?.value || reglaActual.cargo }, turno));
     if (!turnosPreferidos.length) {
-        alert("Selecciona al menos un turno preferido");
+        alert("Selecciona al menos un turno preferido compatible con la profesión del empleado");
         return;
     }
 
@@ -2409,6 +2620,14 @@ function agregarReglaTurnoEmpleado(nombre, mostrarAviso = true, contenedor = doc
         if (mostrarAviso) alert("Completa el código, nombre y horario del nuevo rol");
         return;
     }
+    if (!/^[MT][A-Z0-9-]{1,7}$/.test(codigo)) {
+        if (mostrarAviso) alert("El código debe empezar por M o T y tener entre 2 y 8 caracteres");
+        return;
+    }
+    if (!/^\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}$/.test(horario)) {
+        if (mostrarAviso) alert("El horario debe tener el formato 07:45 - 14:45");
+        return;
+    }
     if (catalogoTurnos.some((turno) => turno.codigo === codigo) || rolesPersonalizadosGuardados.some((turno) => turno.codigo === codigo)) {
         if (mostrarAviso) alert("Ese código ya existe en la aplicación");
         return;
@@ -2436,8 +2655,16 @@ function agregarReglaTurnoEmpleado(nombre, mostrarAviso = true, contenedor = doc
         rolesPersonalizadosGuardados.push(rolPersonalizado);
     }
     guardarRolesPersonalizados();
+    // Sin esto la unidad del empleado no lo consideraría asignable y nunca saldría en el cuadro.
+    const claveUnidad = Object.keys(configuracionUnidades).find((unidad) => unidadesSonIguales(unidad, obtenerUnidadAsignada(reglasPorEmpleado[nombre], "")));
+    if (claveUnidad && Array.isArray(configuracionUnidades[claveUnidad].turnos) && !configuracionUnidades[claveUnidad].turnos.includes(codigo)) {
+        configuracionUnidades[claveUnidad].turnos.push(codigo);
+        localStorage.setItem(STORAGE_UNIDADES_CONFIG_KEY, JSON.stringify(configuracionUnidades));
+        renderizarConfiguracionUnidades();
+    }
     guardarReglas();
     renderizarReglasEmpleadoModal(nombre);
+    renderizarDiasPorRol();
     if (mostrarAviso) alert(`Rol ${codigo} añadido para ${nombre}`);
 }
 
@@ -2604,11 +2831,29 @@ function generarTurnos() {
 
     asignacionesActuales = asignaciones;
     prepararTurnosIndividuales();
-    actualizarResumenCuadro(asignaciones, fechasPeriodo, "todas");
+    renderizarCuadrosVisibles();
+}
 
+// La generación calcula a todo el personal (cobertura coherente); solo se muestra la profesión seleccionada.
+function renderizarCuadrosVisibles() {
+    if (!cuadrosTurnos) return;
+    cuadrosTurnos.innerHTML = "";
+    const visibles = cargoFiltroActual
+        ? asignacionesActuales.filter((asignacion) => cargoDeEmpleado(asignacion.empleado) === cargoFiltroActual)
+        : asignacionesActuales;
+    renderizarPanelProfesiones();
+    actualizarResumenCuadro(visibles, fechasPeriodoActual, cargoFiltroActual ? `profesión ${cargoFiltroActual}` : "todas");
+
+    if (!visibles.length) {
+        const vacio = document.createElement("p");
+        vacio.className = "grupo-turnos-vacio";
+        vacio.textContent = `No hay empleados de ${cargoFiltroActual} en este cuadro.`;
+        cuadrosTurnos.appendChild(vacio);
+        return;
+    }
     ordenCuadros.forEach((grupo) => {
         if (grupo !== "tardes" && grupo !== "otros") {
-            renderizarCuadroGrupo(grupo, asignaciones, fechasPeriodo);
+            renderizarCuadroGrupo(grupo, visibles, fechasPeriodoActual);
         }
     });
 }
@@ -2638,7 +2883,7 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                 rotacionLibres: true
             };
             const unidadEmpleado = obtenerUnidadAsignada(regla, "");
-            const turnosEmpleado = obtenerTurnosResponsabilidad(unidadEmpleado, regla);
+            const turnosEmpleado = filtrarTurnosPorPerfil(obtenerTurnosResponsabilidad(unidadEmpleado, regla), regla);
             const turnosProgramables = turnosEmpleado.filter((turno) => turno !== "Vacaciones");
             const turnosOriginalesPorFecha = [];
             let diasConsecutivos = 0;
@@ -2655,12 +2900,15 @@ function construirAsignaciones(empleadosActivos, fechasPeriodo) {
                         ? turnosProgramables[indiceDia % turnosProgramables.length]
                         : "Descanso";
                 }
+                if (turnosProgramables.length && !turnosProgramables.includes(turno) && !["Descanso", "Libre", "Vacaciones"].includes(turno)) {
+                    turno = turnosProgramables[indiceDia % turnosProgramables.length];
+                }
 
                 if (estaDeVacaciones && turnosEmpleado.includes("Vacaciones") && reglasGenerales.vacacionesImpidenTurno.activa) {
                     turno = "Vacaciones";
                 } else if (regla.diasLibre && regla.diasLibre.includes(fechasPeriodo[indiceDia].nombre) && regla.descanso !== false) {
                     turno = "Descanso";
-                } else if (regla.descanso !== false && regla.maxTurnos && diasConsecutivos >= Math.max(1, Number(regla.maxTurnos))) {
+                } else if (regla.descanso !== false && obtenerMaxConsecutivosEfectivo(regla) && diasConsecutivos >= Math.max(1, obtenerMaxConsecutivosEfectivo(regla))) {
                     turno = "Descanso";
                 }
 
@@ -2786,9 +3034,10 @@ function aplicarTurnosUnicosPorUnidad(unidad, todosRegistros, fechasPeriodo) {
                 .map((registro) => ({
                     registro,
                     nivel: nivelCobertura(registro, unidad),
+                    rol: fueraDeRol(registro, turno),
                     horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla)
                 }))
-                .sort((a, b) => a.nivel - b.nivel || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
+                .sort((a, b) => a.nivel - b.nivel || a.rol - b.rol || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
 
             const asignado = candidatos.some(({ registro }) => intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo));
             if (asignado) {
@@ -2825,7 +3074,9 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
         ["mañanas", "tardes"].forEach((grupo) => {
             const maximo = maximos[grupo];
             if (maximo === null) return;
-            rotar(delGrupo(grupo)).slice(maximo).filter((registro) => !registro.parejaDias?.has(dia)).forEach((registro) => {
+            rotar(delGrupo(grupo))
+                .sort((a, b) => fueraDeRol(a, turnoDia(a)) - fueraDeRol(b, turnoDia(b)))
+                .slice(maximo).filter((registro) => !registro.parejaDias?.has(dia)).forEach((registro) => {
                 registro.turnosOriginalesPorFecha[dia] = "Descanso";
                 delete registro.unidadesPorDia[dia];
             });
@@ -2838,7 +3089,9 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
                 const tarde = delGrupo("tardes");
                 const origen = manana.length >= tarde.length ? manana : tarde;
                 if (!origen.length) break;
-                const elegido = rotar(origen).find((registro) => !registro.parejaDias?.has(dia));
+                const elegido = rotar(origen)
+                    .sort((a, b) => fueraDeRol(b, turnoDia(b)) - fueraDeRol(a, turnoDia(a)))
+                    .find((registro) => !registro.parejaDias?.has(dia));
                 if (!elegido) break;
                 elegido.turnosOriginalesPorFecha[dia] = "Descanso";
                 delete elegido.unidadesPorDia[dia];
@@ -2859,8 +3112,8 @@ function aplicarPuestosRequeridos(unidad, registros, todosRegistros, fechasPerio
             const candidatos = todosRegistros
                 .filter((registro) => ["Descanso", "Libre"].includes(turnoDia(registro)) && !registro.unidadesPorDia[dia])
                 .filter((registro) => especial || !(registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre)))
-                .map((registro) => ({ registro, nivel: nivelCobertura(registro, unidad), horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla) }))
-                .sort((a, b) => a.nivel - b.nivel || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
+                .map((registro) => ({ registro, nivel: nivelCobertura(registro, unidad), afinidad: afinidadRolGrupo(registro, unidad, grupo), horas: calcularHorasTurnos(registro.turnosOriginalesPorFecha, registro.regla) }))
+                .sort((a, b) => a.nivel - b.nivel || a.afinidad - b.afinidad || (especial ? ordenEspecial(a, b) : 0) || a.horas - b.horas);
             for (const { registro } of candidatos) {
                 if (faltan <= 0) break;
                 const trabajando = registros.filter((item) => !["Descanso", "Libre", "Vacaciones"].includes(turnoDia(item))).length;
@@ -2887,6 +3140,30 @@ function libreFijo(registro, dia, fechasPeriodo) {
     return registro.regla.descanso !== false && registro.regla.diasLibre?.includes(fechasPeriodo[dia].nombre) ? 1 : 0;
 }
 
+// Roles propios del empleado: sus turnos preferidos más los de sus reglas de días por rol.
+function obtenerRolesPropios(registro) {
+    if (registro.rolesPropios) return registro.rolesPropios;
+    const roles = new Set(expandirTurnosAgrupados(obtenerTurnosPreferidos(registro.regla)));
+    diasPorRol.filter((item) => item.empleado === registro.empleado).forEach((item) => roles.add(item.codigo));
+    registro.rolesPropios = roles;
+    return roles;
+}
+
+// 0 si el turno forma parte de los roles del empleado; 1 si sería una asignación fuera de rol.
+function fueraDeRol(registro, turno) {
+    if (["Descanso", "Libre", "Vacaciones"].includes(turno)) return 0;
+    return obtenerRolesPropios(registro).has(turno) ? 0 : 1;
+}
+
+// 0 si el empleado tiene algún rol propio disponible en el grupo (mañanas/tardes) de la unidad.
+function afinidadRolGrupo(registro, unidad, grupo) {
+    const grupos = obtenerGruposTurnosUnidad(unidad, registro.regla);
+    if (!grupos) return 0;
+    const opciones = grupo === "mañanas" ? grupos.manana : grupos.tarde;
+    const roles = obtenerRolesPropios(registro);
+    return opciones.some((turno) => roles.has(turno) && turnoCompatibleConProfesion(registro.regla, turno)) ? 0 : 1;
+}
+
 // 0: pertenece a la unidad, 1: la incluye en su rotaci\u00f3n, 2: otra unidad.
 function nivelCobertura(registro, unidad) {
     if (registro.unidad === unidad) return 0;
@@ -2904,13 +3181,13 @@ function elegirTurnoCobertura(registro, unidad, grupo, usados) {
     const turnosUnicos = new Set((obtenerConfiguracionUnidad(unidad)?.turnos || []).filter((turno) =>
         turno !== "Vacaciones" && ["mañanas", "tardes"].includes(clasificarTurno(turno))
     ));
-    opciones = opciones.filter((turno) => !turnosUnicos.has(turno) || !usados.get(turno));
+    opciones = opciones.filter((turno) => turnoCompatibleConProfesion(registro.regla, turno) && (!turnosUnicos.has(turno) || !usados.get(turno)));
     if (!opciones.length) return null;
     return opciones.slice().sort((a, b) => (usados.get(a) || 0) - (usados.get(b) || 0))[0];
 }
 
 function intentarAsignarCobertura(registro, dia, turno, unidad, fechasPeriodo) {
-    if (!turnoAsignableEnUnidad(unidad, turno)) return false;
+    if (!turnoAsignableEnUnidad(unidad, turno) || !turnoCompatibleConProfesion(registro.regla, turno)) return false;
     const original = registro.turnosOriginalesPorFecha;
     const previo = original[dia];
     const normalizar = (turnos) => {
@@ -3131,7 +3408,7 @@ const NO_TRABAJA = ["Descanso", "Libre", "Vacaciones"];
 
 function calcularInformeCuadro() {
     const festivos = obtenerFestivos();
-    const filas = asignacionesActuales.map((asignacion) => {
+    const filas = asignacionesActuales.filter((asignacion) => !cargoFiltroActual || cargoDeEmpleado(asignacion.empleado) === cargoFiltroActual).map((asignacion) => {
         const turnos = asignacion.turnos;
         const fila = { empleado: asignacion.empleado, unidad: asignacion.unidad, jornada: asignacion.porcentaje,
             horas: asignacion.horas, maximo: null, dias: 0, descansos: 0, vacaciones: 0, especiales: 0, mananas: 0, tardes: 0, cambios: 0 };
@@ -3376,6 +3653,8 @@ function generarContinuidadSemanalDesdeCuadros() {
     guardarDetallesCambiosManuales();
 
     fechaInicioTurnos.value = inicio;
+
+    fechasPeriodoManuales = true;
     fechaFinTurnos.value = fin;
     generarTurnos();
 
@@ -3454,6 +3733,7 @@ function recuperarCuadroGuardado() {
     const cuadro = cuadrosGuardados.find((item) => item.id === document.getElementById("cuadrosGuardados").value);
     if (!cuadro) return;
     if (fechaInicioTurnos) fechaInicioTurnos.value = cuadro.inicio;
+    fechasPeriodoManuales = true;
     if (fechaFinTurnos) fechaFinTurnos.value = cuadro.fin;
     registrarHistorialCambios();
     const fechas = obtenerFechasPeriodo(cuadro.inicio, cuadro.fin);
@@ -3543,6 +3823,8 @@ function generarContinuidadTurnos() {
     guardarDetallesCambiosManuales();
 
     fechaInicioTurnos.value = inicio;
+
+    fechasPeriodoManuales = true;
     fechaFinTurnos.value = fin;
     semillasContinuidad = semillas;
     generarTurnos();
@@ -3955,7 +4237,8 @@ function abrirEditorCambioTurno(empleado, fecha) {
     detalleCambioTurno.textContent = `${empleado} · ${fechaTexto} · Turno actual: ${asignacion.turnos[indiceFecha]}`;
     nuevoTurnoIndividual.innerHTML = "";
 
-    [...catalogoTurnos.map((turno) => turno.codigo), "Descanso", "Libre"].forEach((turno) => {
+    const reglaAsignacion = reglasPorEmpleado[empleado];
+    [...obtenerCatalogoTurnosEmpleado(reglaAsignacion).map((turno) => turno.codigo), "Descanso", "Libre"].forEach((turno) => {
         const opcion = document.createElement("option");
         opcion.value = turno;
         opcion.textContent = turno;
@@ -4194,7 +4477,7 @@ function obtenerPorcentajeJornada(regla) {
 }
 
 function obtenerHoraSalida(turno) {
-    const datos = catalogoTurnos.find((item) => item.codigo === turno);
+    const datos = obtenerCatalogoTurnosEmpleado({}).find((item) => item.codigo === turno);
     if (!datos || !datos.horario.includes("-")) return "";
     return datos.horario.split("-")[1].trim();
 }
@@ -4277,7 +4560,19 @@ function clasificarTurno(turno) {
     return "otros";
 }
 
+// Los turnos preferidos nunca incluyen códigos que no correspondan a la profesión; si no queda ninguno se busca uno válido.
 function obtenerTurnosPreferidos(regla) {
+    const turnos = obtenerTurnosPreferidosBase(regla);
+    if (regla?.perfilProfesionActivo === false) return turnos;
+    const validos = turnos.filter((turno) => turnoCompatibleConProfesion(regla, turno));
+    if (validos.length) return validos;
+    const perfil = obtenerPerfilProfesion(regla?.cargo);
+    const alternativo = [...perfil.preferidos, ...obtenerCatalogoTurnosEmpleado(regla).map((turno) => turno.codigo)]
+        .find((codigo) => codigo !== "Vacaciones" && turnoCompatibleConProfesion(regla, codigo));
+    return alternativo ? [alternativo] : turnos;
+}
+
+function obtenerTurnosPreferidosBase(regla) {
     if (Array.isArray(regla.turnosPreferidos) && regla.turnosPreferidos.length) {
         const catalogoEmpleado = obtenerCatalogoTurnosEmpleado(regla);
         const turnosValidos = expandirTurnosAgrupados(regla.turnosPreferidos).filter((turno) =>
@@ -4638,6 +4933,39 @@ function convertirFechaLocal(fecha) {
     return `${fecha.getFullYear()}-${mes}-${dia}`;
 }
 
+let fechasPeriodoManuales = false;
+
+// Si el usuario no ha elegido fechas propias (o están vacías o son inválidas), se sitúan en la semana del calendario actual.
+function sincronizarFechasConCalendario() {
+    if (!fechaInicioTurnos || !fechaFinTurnos) return;
+    const incompletas = !fechaInicioTurnos.value || !fechaFinTurnos.value || fechaFinTurnos.value < fechaInicioTurnos.value;
+    if (fechasPeriodoManuales && !incompletas) return;
+    establecerPeriodoActual();
+}
+
+// El período arranca en la fecha de hoy y cubre 7 días.
+function establecerPeriodoActual() {
+    if (!fechaInicioTurnos || !fechaFinTurnos) return;
+    const hoy = new Date();
+    const fin = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() + 6);
+    fechaInicioTurnos.value = convertirFechaLocal(hoy);
+    fechaFinTurnos.value = convertirFechaLocal(fin);
+    fechasPeriodoManuales = false;
+}
+
+// Evita que el navegador restaure fechas antiguas al recargar o volver a la pestaña.
+window.addEventListener("pageshow", () => {
+    if (!fechasPeriodoManuales) establecerPeriodoActual();
+});
+document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !fechasPeriodoManuales) establecerPeriodoActual();
+});
+
+function generarTurnosDesdeBoton() {
+    sincronizarFechasConCalendario();
+    generarTurnos();
+}
+
 function obtenerFechaInicioSemana() {
     const fecha = new Date();
     const diaActual = fecha.getDay() === 0 ? 6 : fecha.getDay() - 1;
@@ -4656,8 +4984,9 @@ function normalizarColor(color) {
 }
 
 function inicializarValores() {
-    if (fechaInicioTurnos) fechaInicioTurnos.value = obtenerFechaInicioSemana();
-    if (fechaFinTurnos) fechaFinTurnos.value = obtenerFechaFinSemana();
+    if (fechaInicioTurnos) fechaInicioTurnos.autocomplete = "off";
+    if (fechaFinTurnos) fechaFinTurnos.autocomplete = "off";
+    establecerPeriodoActual();
     renderizarConfiguracionUnidades();
     actualizarSelectorUnidades();
     mostrarEmpleados();

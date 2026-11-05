@@ -89,6 +89,18 @@
                 </div>
             </div>
 
+            <div class="panel-profesiones" aria-label="Gestión de turnos por profesión">
+                <h4>Turnos por profesión</h4>
+                <div id="filtroProfesiones" class="botones-profesiones" role="group" aria-label="Filtrar por profesión"></div>
+                <div id="detalleProfesion" class="detalle-profesion" aria-live="polite" hidden>
+                    <p id="descripcionProfesion"></p>
+                    <div class="acciones-profesion">
+                        <button id="botonAplicarPerfilProfesion" class="boton boton-secundario" type="button">Aplicar perfil a la profesión</button>
+                        <button id="botonGenerarProfesion" class="boton boton-primario" type="button">Generar turnos de la profesión</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="listaEmpleados" class="lista-empleados"></div>
         </section>
         </div>
@@ -303,6 +315,7 @@
                     <input type="text" id="festivosTurnos" placeholder="2026-12-25, 2027-01-01">
                 </div>
             </div>
+            <div id="filtroProfesionesCuadro" class="botones-profesiones filtro-profesiones-cuadro" role="group" aria-label="Mostrar cuadro por profesión"></div>
             <div class="acciones-generacion">
                 <button id="botonGenerar" class="boton boton-primario" type="button">
                     Generar turnos
@@ -494,6 +507,7 @@
                                 <option value="Otros">Otros</option>
                             </select>
                             <div id="responsabilidadesCargo" class="responsabilidades-cargo-lista" aria-live="polite"></div>
+                            <button id="botonPerfilEmpleado" class="boton boton-secundario" type="button">Aplicar perfil de la profesión a este empleado</button>
                         </div>
 
                         <div class="campo campo-full">

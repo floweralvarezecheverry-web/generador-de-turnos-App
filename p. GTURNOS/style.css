@@ -2267,3 +2267,81 @@ footer {
         display: none !important;
     }
 }
+
+/* Gestión de turnos por profesión */
+.panel-profesiones {
+    margin: 14px 0;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+}
+
+.panel-profesiones h4 {
+    margin: 0 0 8px;
+}
+
+.botones-profesiones,
+.acciones-profesion {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.boton-profesion {
+    padding: 6px 12px;
+    border: 2px solid var(--color-profesion, #64748b);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--color-profesion, #334155);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.boton-profesion:hover,
+.boton-profesion.activo {
+    background: var(--color-profesion, #334155);
+    color: #fff;
+}
+
+.detalle-profesion {
+    margin-top: 10px;
+    padding: 10px;
+    border-left: 4px solid var(--color-profesion, #64748b);
+    background: #fff;
+}
+
+.detalle-profesion p {
+    margin: 0 0 8px;
+    font-size: 0.88rem;
+}
+
+[data-cargo="Coordinador"] { --color-profesion: #7c3aed; }
+[data-cargo="Auxiliar"] { --color-profesion: #0891b2; }
+[data-cargo="Limpieza"] { --color-profesion: #16a34a; }
+[data-cargo="Enfermero"] { --color-profesion: #dc2626; }
+[data-cargo="Médico"] { --color-profesion: #2563eb; }
+[data-cargo="Otros"] { --color-profesion: #64748b; }
+[data-cargo=""] { --color-profesion: #334155; }
+
+.empleado-item[data-cargo] .cargo-empleado-lista {
+    background: var(--color-profesion);
+    color: #fff;
+}
+
+.empleado-item[data-cargo] {
+    border-right: 4px solid var(--color-profesion);
+}
+
+#botonPerfilEmpleado {
+    margin-top: 8px;
+}
+
+.filtro-profesiones-cuadro {
+    margin: 10px 0;
+}
+
+.turno-catalogo.turno-no-profesion {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
